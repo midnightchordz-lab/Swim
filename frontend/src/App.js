@@ -8,7 +8,7 @@ import {
   CheckCircle, Loader2, ArrowRight, Send, AlertCircle,
   Twitter, ChevronRight, Zap, Target, TrendingUp, AlertTriangle,
   Download, RefreshCw, Eye, EyeOff, Settings, Terminal,
-  Globe, Radio, Clock, Wifi, PlusCircle, Sparkles
+  Globe, Radio, Clock, Wifi, PlusCircle, Sparkles, Shield
 } from "lucide-react";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -1645,6 +1645,23 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
             confidence={report.prediction?.confidence}
           />
         </div>
+        {/* Simulation Quality Badge */}
+        {report.quality_score != null && (
+          <div data-testid="quality-score-badge" className={`mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border ${
+            report.quality_score >= 8 ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400' :
+            report.quality_score >= 6 ? 'bg-blue-500/15 border-blue-500/40 text-blue-400' :
+            report.quality_score >= 4 ? 'bg-yellow-500/15 border-yellow-500/40 text-yellow-400' :
+            'bg-red-500/15 border-red-500/40 text-red-400'
+          }`}>
+            <Shield className="w-3.5 h-3.5" />
+            Simulation Quality: {
+              report.quality_score >= 8 ? 'Excellent' :
+              report.quality_score >= 6 ? 'Good' :
+              report.quality_score >= 4 ? 'Fair' : 'Low'
+            } ({report.quality_score}/10)
+            {report.overconfident && <span className="text-yellow-400 ml-1">(overconfident)</span>}
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

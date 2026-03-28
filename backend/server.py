@@ -508,81 +508,21 @@ async def upload_document(
     file: UploadFile = File(...),
     prediction_query: str = Form(...)
 ):
-    """Upload document and extract knowledge graph"""
+    """Upload document and extract knowledge graph via Graph Agent"""
+    from services.agents import graph_agent as graph_agent_module
     session = await db.sessions.find_one({"id": session_id})
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     
-    # Parse document (returns text and optional image_data)
+    # Parse document
     text, image_data = await parse_document(file)
     
-    # Extract knowledge graph using Claude
-    system_prompt = """You are a knowledge-graph extraction expert. Given seed text (or an image) and a prediction question, extract entities and relationships. Respond ONLY with valid JSON, no markdown fences."""
-    
-    if image_data:
-        # Image-based extraction
-        user_prompt = f"""Analyze this image carefully and extract a knowledge graph based on the content you see.
-Prediction Question: {prediction_query}
-
-Return JSON:
-{{
-  "summary": "2-3 sentence description of what the image shows and the situation",
-  "themes": ["theme1", "theme2", "theme3"],
-  "entities": [
-    {{
-      "id": "e1",
-      "name": "Entity Name",
-      "type": "person|organization|faction|concept|event",
-      "description": "Brief description",
-      "stance": "positive|negative|neutral|conflicted"
-    }}
-  ],
-  "relationships": [
-    {{
-      "source": "e1",
-      "target": "e2",
-      "label": "relationship description",
-      "weight": 0.8
-    }}
-  ]
-}}
-Extract 8-20 entities and 10-25 relationships relevant to the prediction question based on what you see in the image."""
-    else:
-        # Text-based extraction
-        text = text[:TEXT_TRUNCATE_LIMIT]
-        user_prompt = f"""Seed Text: \"\"\"{text}\"\"\"
-Prediction Question: {prediction_query}
-
-Return JSON:
-{{
-  "summary": "2-3 sentence description of the situation",
-  "themes": ["theme1", "theme2", "theme3"],
-  "entities": [
-    {{
-      "id": "e1",
-      "name": "Entity Name",
-      "type": "person|organization|faction|concept|event",
-      "description": "Brief description",
-      "stance": "positive|negative|neutral|conflicted"
-    }}
-  ],
-  "relationships": [
-    {{
-      "source": "e1",
-      "target": "e2",
-      "label": "relationship description",
-      "weight": 0.8
-    }}
-  ]
-}}
-Extract 8-20 entities and 10-25 relationships relevant to the prediction question."""
-
     try:
-        response = await call_claude(system_prompt, user_prompt, max_tokens=3000, image_data=image_data)
-        cleaned = clean_json_response(response)
-        graph = json.loads(cleaned)
+        graph = await graph_agent_module.run_from_document(
+            text, prediction_query, call_claude, image_data=image_data
+        )
     except json.JSONDecodeError as e:
-        logger.error(f"JSON parsing error: {e}, response: {response[:500]}")
+        logger.error(f"JSON parsing error: {e}")
         raise HTTPException(status_code=500, detail="Failed to parse knowledge graph from AI response")
     except Exception as e:
         logger.error(f"Claude API error: {e}")
@@ -605,53 +545,43 @@ Extract 8-20 entities and 10-25 relationships relevant to the prediction questio
 
 
 async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_query: str):
-    """Background task to fetch live web data and generate intelligence brief"""
+    """Background task: orchestrator runs Intel + Graph pipeline."""
+    from services.agents import orchestrator
     try:
-        # Update progress
         await db.sessions.update_one(
             {"id": session_id},
             {"$set": {"live_progress": "Initializing web search...", "live_progress_step": 0, "live_progress_total": 9}}
         )
-        
-        # Fetch real-time financial data first (if applicable)
+
+        # Fetch real-time financial data
         await db.sessions.update_one(
             {"id": session_id},
             {"$set": {"live_progress": "Fetching real-time market data...", "live_progress_step": 0}}
         )
         financial_data = await fetch_financial_data(topic)
-        
-        # Fetch Yahoo News RSS headlines (no API key needed)
+
+        # Fetch news headlines
         await db.sessions.update_one(
             {"id": session_id},
             {"$set": {"live_progress": "Fetching latest news headlines...", "live_progress_step": 1}}
         )
         yahoo_headlines = fetch_yahoo_news(topic)
-        logger.info(f"Yahoo News headlines fetched: {len(yahoo_headlines.splitlines())} items")
-        
-        # Fetch live web data (8 searches)
-        logger.info(f"Fetching live data for topic: {topic}")
+        logger.info(f"News headlines fetched: {len(yahoo_headlines.splitlines())} items")
+
+        # Fetch web search data (8 queries with progress tracking)
         web_data = await fetch_web_data(topic, horizon, session_id=session_id)
-        
+
         if not web_data.get("results") and not financial_data.get("has_data"):
             await db.sessions.update_one(
                 {"id": session_id},
                 {"$set": {"live_fetch_status": "failed", "live_fetch_error": "Could not fetch live data. Please try a different topic."}}
             )
             return
-        
-        # Update progress - building graph
-        await db.sessions.update_one(
-            {"id": session_id},
-            {"$set": {"live_progress": "Building knowledge graph..."}}
-        )
-        
-        # Build context from web results
-        context_parts = []
-        for result in web_data["results"][:20]:
-            context_parts.append(f"- {result['title']}: {result['snippet']}")
+
+        # Build contexts for the orchestrator
+        context_parts = [f"- {r['title']}: {r['snippet']}" for r in web_data["results"][:20]]
         web_context = "\n".join(context_parts)
-        
-        # Build real-time financial context
+
         financial_context = ""
         if financial_data.get("has_data"):
             fin_parts = ["\n=== VERIFIED REAL-TIME MARKET DATA (use these exact numbers) ==="]
@@ -671,76 +601,17 @@ async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_q
                 fin_parts.append(line)
             fin_parts.append("=== END VERIFIED MARKET DATA ===\n")
             financial_context = "\n".join(fin_parts)
-        
-        # Generate intelligence brief using Claude
-        system_prompt = """You are an intelligence analyst creating a brief on a current topic. Based on the web data provided, create a structured intelligence brief of 800-1200 words. 
-CRITICAL: If real-time market data is provided (marked as VERIFIED), you MUST use those exact price figures in your analysis. Do NOT invent or estimate prices — use only the verified data provided.
-Respond ONLY with valid JSON, no markdown fences."""
-        
-        user_prompt = f"""Topic: {topic}
-Prediction Horizon: {horizon}
-Prediction Question: {prediction_query}
-{financial_context}
-Latest headlines for {topic}:
-{yahoo_headlines}
 
-Live Web Data ({len(web_data['results'])} sources):
-{web_context}
-
-Using these as your primary source, write a comprehensive 800-word intel brief covering all angles relevant to the prediction horizon: {horizon}
-
-IMPORTANT: If VERIFIED REAL-TIME MARKET DATA is provided above, use those exact prices and figures in your summary and data_points. Do NOT make up different numbers.
-
-Return JSON:
-{{
-  "summary": "Detailed 800-1200 word executive summary synthesizing all findings, covering current state, key developments, stakeholder positions, data trends, and outlook. Use verified market prices if available.",
-  "key_developments": ["recent development 1", "recent development 2", "recent development 3", "recent development 4", "recent development 5"],
-  "stakeholders": [
-    {{"name": "Stakeholder Name", "position": "Their current stance or action", "influence": "high|medium|low"}}
-  ],
-  "data_points": [
-    {{"metric": "Key metric or stat", "value": "Current value", "trend": "up|down|stable"}}
-  ],
-  "themes": ["theme1", "theme2", "theme3", "theme4", "theme5"],
-  "entities": [
-    {{
-      "id": "e1",
-      "name": "Entity Name",
-      "type": "person|organization|faction|concept|event",
-      "description": "Brief description based on current data",
-      "stance": "positive|negative|neutral|conflicted"
-    }}
-  ],
-  "relationships": [
-    {{"source": "e1", "target": "e2", "label": "relationship", "weight": 0.8}}
-  ],
-  "uncertainty_factors": ["factor that could change outcomes"],
-  "confidence_level": "high|medium|low"
-}}
-Extract 10-20 entities and 15-30 relationships based on the live data."""
-
-        await db.sessions.update_one(
-            {"id": session_id},
-            {"$set": {"live_progress": "Generating intelligence brief..."}}
+        # Run orchestrator Intel + Graph pipeline
+        state = await orchestrator.run_live_intel_pipeline(
+            session_id, topic, horizon, prediction_query,
+            web_context, yahoo_headlines, financial_context,
+            financial_data, call_claude, db
         )
-        
-        response = await call_claude(system_prompt, user_prompt, max_tokens=4000)
-        cleaned = clean_json_response(response)
-        intel_brief = json.loads(cleaned)
-        
-        # Inject verified financial data into intel_brief for frontend display
-        if financial_data.get("has_data"):
-            intel_brief["verified_market_data"] = financial_data["data"]
-        
-        # Create graph structure from intel brief
-        graph = {
-            "summary": intel_brief.get("summary", ""),
-            "themes": intel_brief.get("themes", []),
-            "entities": intel_brief.get("entities", []),
-            "relationships": intel_brief.get("relationships", [])
-        }
-        
-        # Update session with live data
+
+        intel_brief = state["intel_brief"]
+        graph = state["graph"]
+
         await db.sessions.update_one(
             {"id": session_id},
             {
@@ -754,12 +625,13 @@ Extract 10-20 entities and 15-30 relationships based on the live data."""
                     "fetched_at": web_data["fetched_at"],
                     "live_fetch_status": "completed",
                     "live_progress": "Complete!",
+                    "brief_critique": json.dumps(state.get("brief_critique", {})),
                     "updated_at": datetime.now(timezone.utc).isoformat()
                 }
             }
         )
-        logger.info(f"Live fetch completed for session {session_id}: {len(graph['entities'])} entities, {len(web_data['results'])} sources")
-        
+        logger.info(f"Live fetch completed for session {session_id}: {len(graph.get('entities', []))} entities")
+
     except Exception as e:
         logger.error(f"Live fetch failed for session {session_id}: {e}")
         await db.sessions.update_one(
@@ -992,75 +864,18 @@ async def get_prediction_horizons():
 
 
 async def run_agent_generation(session_id: str, num_agents: int):
-    """Background task to generate agents"""
+    """Background task: orchestrator runs Persona Agent pipeline."""
+    from services.agents import orchestrator
     try:
-        session = await db.sessions.find_one({"id": session_id})
-        if not session:
+        result = await orchestrator.run_agent_generation_pipeline(
+            session_id, num_agents, call_claude, db
+        )
+        if not result:
             return
-        
-        graph = json.loads(session["graph_json"])
-        query = session["prediction_query"]
-        data_mode = session.get("data_mode", "upload")
-        topic = session.get("topic", "")
-        
-        topic_category = detect_topic_category(topic or query)
-        entities_summary = json.dumps([{"name": e["name"], "type": e["type"]} for e in graph.get("entities", [])])
-        
-        intel_context = ""
-        if data_mode == "live" and session.get("intel_brief"):
-            intel_brief = json.loads(session["intel_brief"])
-            stakeholders = intel_brief.get("stakeholders", [])
-            if stakeholders:
-                intel_context = f"\nKey Stakeholders from live data: {json.dumps(stakeholders[:5])}"
-        
-        category_guidance = {
-            "financial": "Include: financial analysts, retail investors, institutional traders, economists, financial journalists, fintech founders",
-            "political": "Include: political analysts, voters from different demographics, campaign strategists, journalists, activists, lobbyists",
-            "geopolitical": "Include: foreign policy experts, military analysts, diplomats, regional specialists, journalists, affected citizens",
-            "sports": "Include: sports analysts, fans, coaches, former players, sports journalists, betting analysts",
-            "tech": "Include: tech analysts, startup founders, engineers, VCs, tech journalists, early adopters, skeptics",
-            "social_cultural": "Include: cultural critics, influencers, activists, everyday people, researchers, journalists"
-        }.get(topic_category, "Include diverse perspectives from various backgrounds")
-        
-        system_prompt = """You are a simulation designer. Create realistic agent personas for a social prediction simulation. Respond ONLY with valid JSON, no markdown fences."""
-        
-        user_prompt = f"""World Context: {graph.get('summary', '')}
-Key Themes: {', '.join(graph.get('themes', []))}
-Entities: {entities_summary}
-Prediction Question: {query}
-Data Mode: {data_mode.upper()} {"(Live real-time data)" if data_mode == "live" else "(Document-based)"}
-{intel_context}
 
-Agent Guidance: {category_guidance}
+        agents = result["agents"]
+        diversity_score = result["diversity_score"]
 
-Create exactly {num_agents} diverse agent personas. Return JSON:
-{{
-  "agents": [
-    {{
-      "id": "agent_1",
-      "name": "Full Name",
-      "avatar_emoji": "single emoji",
-      "age": 35,
-      "occupation": "specific job relevant to the topic",
-      "background": "2-sentence backstory explaining their expertise/stake in this topic",
-      "personality_type": "Skeptic|Optimist|Insider|Contrarian|Expert|Neutral|Activist|Pragmatist",
-      "initial_stance": "Their specific position on the current situation (1-2 sentences)",
-      "influence_level": 7,
-      "platform_preference": "Twitter|Reddit",
-      "communication_style": "analytical|emotional|aggressive|diplomatic|satirical|factual"
-    }}
-  ]
-}}
-Make agents feel like real distinct people. Vary demographics, professions, viewpoints. Ensure agents have SPECIFIC knowledge relevant to the topic."""
-
-        response = await call_claude(system_prompt, user_prompt, max_tokens=4000)
-        cleaned = clean_json_response(response)
-        agents_data = json.loads(cleaned)
-        agents = agents_data.get("agents", [])
-        
-        for agent in agents:
-            agent["memories"] = []
-        
         await db.sessions.update_one(
             {"id": session_id},
             {
@@ -1068,12 +883,13 @@ Make agents feel like real distinct people. Vary demographics, professions, view
                     "status": "agents_ready",
                     "agents_json": json.dumps(agents),
                     "agent_gen_status": "completed",
+                    "diversity_score": diversity_score,
                     "updated_at": datetime.now(timezone.utc).isoformat()
                 }
             }
         )
-        logger.info(f"Agent generation completed for session {session_id}: {len(agents)} agents")
-        
+        logger.info(f"Agent generation completed: {len(agents)} agents, diversity={diversity_score}")
+
     except Exception as e:
         logger.error(f"Agent generation failed for session {session_id}: {e}")
         await db.sessions.update_one(
@@ -1126,150 +942,12 @@ async def get_agent_status(session_id: str):
 
 
 async def run_simulation(session_id: str, num_rounds: int):
-    """Background task to run the simulation"""
+    """Background task: orchestrator runs Simulation Director pipeline."""
+    from services.agents import orchestrator
     try:
-        session = await db.sessions.find_one({"id": session_id})
-        if not session:
-            return
-        
-        agents = json.loads(session["agents_json"])
-        graph = json.loads(session["graph_json"])
-        query = session["prediction_query"]
-        
-        # Store current round for status tracking
-        await db.sessions.update_one(
-            {"id": session_id},
-            {"$set": {"current_round": 0, "total_rounds": num_rounds}}
+        await orchestrator.run_simulation_pipeline(
+            session_id, num_rounds, call_claude, db
         )
-        
-        for round_num in range(1, num_rounds + 1):
-            await db.sessions.update_one(
-                {"id": session_id},
-                {"$set": {"current_round": round_num}}
-            )
-            
-            # Select random subset of agents (60-80%)
-            active_agents = random.sample(agents, k=max(3, int(len(agents) * random.uniform(0.6, 0.8))))
-            
-            # Get recent posts for context
-            recent_posts = await db.sim_posts.find(
-                {"session_id": session_id}
-            ).sort("_id", -1).limit(8).to_list(8)
-            
-            recent_context = "\n".join([
-                f"{p['platform']}: {p['agent_name']}: {p['content']}"
-                for p in reversed(recent_posts)
-            ]) if recent_posts else "No previous posts yet."
-            
-            for agent in active_agents:
-                platform = agent.get("platform_preference", random.choice(["Twitter", "Reddit"]))
-                
-                # Get agent's recent memories
-                agent_memories = agent.get("memories", [])[-5:]
-                memory_context = "\n".join(agent_memories) if agent_memories else "No previous memories."
-                
-                platform_instruction = "Keep under 280 characters. Short and punchy." if platform == "Twitter" else "Write 2-4 sentences. More nuanced."
-                
-                system_prompt = f"""You are playing the role of {agent['name']}. Stay deeply in character. Write authentic social media posts reflecting this person's background, personality, and stance. Be specific and human."""
-                
-                user_prompt = f"""You are: {agent['name']} ({agent['occupation']})
-Personality: {agent['personality_type']}
-Communication Style: {agent['communication_style']}
-Background: {agent['background']}
-Current Stance: {agent['initial_stance']}
-Your recent thoughts: {memory_context}
-World Context: {graph.get('summary', '')}
-Prediction Question: {query}
-Recent posts (last 8): {recent_context}
-Platform: {platform}
-{platform_instruction}
-
-Write ONE authentic post as {agent['name']}. Output ONLY the post content."""
-
-                try:
-                    response = await call_claude(system_prompt, user_prompt, max_tokens=200)
-                    content = response.strip()
-                    
-                    # Save post
-                    post = {
-                        "session_id": session_id,
-                        "round": round_num,
-                        "agent_id": agent["id"],
-                        "agent_name": agent["name"],
-                        "agent_emoji": agent.get("avatar_emoji", "🧑"),
-                        "platform": platform,
-                        "content": content,
-                        "post_type": "post",
-                        "created_at": datetime.now(timezone.utc).isoformat()
-                    }
-                    await db.sim_posts.insert_one(post)
-                    
-                    # Update agent memory
-                    agent["memories"] = agent.get("memories", [])[-9:] + [f"I posted: {content[:100]}"]
-                    
-                except Exception as e:
-                    logger.error(f"Error generating post for {agent['name']}: {e}")
-                    continue
-                
-                # Small delay to avoid rate limiting
-                await asyncio.sleep(0.5)
-            
-            # Generate some replies
-            all_posts = await db.sim_posts.find({"session_id": session_id, "round": round_num}).to_list(100)
-            if all_posts and len(active_agents) >= 2:
-                reply_agents = random.sample(active_agents, min(2, len(active_agents)))
-                target_posts = random.sample(all_posts, min(2, len(all_posts)))
-                
-                for i, agent in enumerate(reply_agents):
-                    if i >= len(target_posts):
-                        break
-                    target_post = target_posts[i]
-                    if target_post["agent_id"] == agent["id"]:
-                        continue
-                    
-                    platform = target_post["platform"]
-                    system_prompt = f"""You are playing the role of {agent['name']}. You're replying to someone else's post. Stay in character and respond authentically."""
-                    
-                    user_prompt = f"""You are: {agent['name']} ({agent['occupation']})
-Personality: {agent['personality_type']}
-You're replying to this post by {target_post['agent_name']}: "{target_post['content']}"
-Platform: {platform}
-Write a brief reply (1-2 sentences). Output ONLY the reply content."""
-
-                    try:
-                        response = await call_claude(system_prompt, user_prompt, max_tokens=150)
-                        reply_content = response.strip()
-                        
-                        reply = {
-                            "session_id": session_id,
-                            "round": round_num,
-                            "agent_id": agent["id"],
-                            "agent_name": agent["name"],
-                            "agent_emoji": agent.get("avatar_emoji", "🧑"),
-                            "platform": platform,
-                            "content": reply_content,
-                            "post_type": "reply",
-                            "reply_to": target_post["agent_name"],
-                            "created_at": datetime.now(timezone.utc).isoformat()
-                        }
-                        await db.sim_posts.insert_one(reply)
-                    except Exception as e:
-                        logger.error(f"Error generating reply: {e}")
-                    
-                    await asyncio.sleep(0.3)
-        
-        # Update agents with final memories
-        await db.sessions.update_one(
-            {"id": session_id},
-            {
-                "$set": {
-                    "status": "simulation_done",
-                    "agents_json": json.dumps(agents),
-                    "updated_at": datetime.now(timezone.utc).isoformat()
-                }
-            }
-        )
-        
     except Exception as e:
         logger.error(f"Simulation error: {e}")
         await db.sessions.update_one(
@@ -1337,111 +1015,35 @@ async def get_posts(session_id: str):
 
 @api_router.post("/sessions/{session_id}/generate-report")
 async def generate_report(session_id: str):
-    """Generate prediction report from simulation"""
+    """Generate prediction report via orchestrator Report + Critic pipeline."""
+    from services.agents import orchestrator
     session = await db.sessions.find_one({"id": session_id})
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     if session.get("status") not in ["simulation_done", "complete"]:
         raise HTTPException(status_code=400, detail="Simulation not complete")
-    
-    agents = json.loads(session["agents_json"])
-    graph = json.loads(session["graph_json"])
-    query = session["prediction_query"]
-    
-    # Get all posts
-    posts = await db.sim_posts.find({"session_id": session_id}).sort([("round", 1), ("created_at", 1)]).to_list(1000)
-    
-    # Build transcript (capped at 8000 chars)
-    transcript_parts = []
-    for post in posts:
-        entry = f"[Round {post['round']}][{post['platform']}][{post['post_type'].upper()}] {post['agent_name']}: {post['content']}"
-        transcript_parts.append(entry)
-    
-    full_transcript = "\n".join(transcript_parts)
-    if len(full_transcript) > TRANSCRIPT_CAP:
-        first_part = full_transcript[:3000]
-        last_part = full_transcript[-5000:]
-        full_transcript = first_part + "\n...[truncated]...\n" + last_part
-    
-    # Build agents summary
-    agents_summary = "\n".join([
-        f"- {a['name']} ({a['occupation']}) [{a['personality_type']}]: {a['initial_stance']}"
-        for a in agents
-    ])
-    
-    total_rounds = session.get("total_rounds", 5)
-    
-    system_prompt = """You are a senior analyst who just observed a multi-agent social simulation. Produce a rigorous prediction report. Respond ONLY with valid JSON, no markdown fences."""
-    
-    user_prompt = f"""Prediction Question: {query}
-World Summary: {graph.get('summary', '')}
-Themes: {', '.join(graph.get('themes', []))}
-Agents ({len(agents)} total):
-{agents_summary}
-
-Simulation transcript ({total_rounds} rounds):
-{full_transcript}
-
-Return JSON:
-{{
-  "executive_summary": "3-4 sentence high-level answer",
-  "prediction": {{
-    "outcome": "Most likely predicted outcome",
-    "confidence": "High|Medium|Low",
-    "confidence_score": 0.72,
-    "timeframe": "e.g. next 3-6 months"
-  }},
-  "opinion_landscape": {{
-    "dominant_sentiment": "positive|negative|divided|uncertain",
-    "support_percentage": 45,
-    "opposition_percentage": 38,
-    "undecided_percentage": 17,
-    "key_factions": [
-      {{
-        "name": "Faction Name",
-        "size": "Large|Medium|Small",
-        "stance": "Their position",
-        "key_arguments": ["arg1", "arg2"]
-      }}
-    ]
-  }},
-  "key_turning_points": [
-    {{"round": 2, "description": "What shifted", "impact": "How dynamics changed"}}
-  ],
-  "emergent_patterns": ["Pattern that emerged from agent interactions"],
-  "risk_factors": [
-    {{"factor": "Risk name", "likelihood": "High|Medium|Low", "impact": "Description"}}
-  ],
-  "alternative_scenarios": [
-    {{"scenario": "Title", "probability": 0.25, "conditions": "What would trigger this"}}
-  ],
-  "agent_highlights": [
-    {{"agent_name": "Name", "role_in_simulation": "How they influenced dynamics", "notable_quote": "Their most impactful post"}}
-  ]
-}}"""
 
     try:
-        response = await call_claude(system_prompt, user_prompt, max_tokens=3000)
-        cleaned = clean_json_response(response)
-        report = json.loads(cleaned)
+        report = await orchestrator.run_report_pipeline(session_id, call_claude, db)
     except json.JSONDecodeError as e:
         logger.error(f"JSON parsing error: {e}")
         raise HTTPException(status_code=500, detail="Failed to parse report from AI response")
     except Exception as e:
         logger.error(f"Claude API error: {e}")
         raise HTTPException(status_code=500, detail=f"AI processing error: {str(e)}")
-    
+
     await db.sessions.update_one(
         {"id": session_id},
         {
             "$set": {
                 "status": "complete",
                 "report_json": json.dumps(report),
+                "quality_score": report.get("quality_score", 0),
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }
         }
     )
-    
+
     return {"report": report}
 
 

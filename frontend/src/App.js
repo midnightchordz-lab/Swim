@@ -7,11 +7,22 @@ import {
   Upload, FileText, Users, Play, BarChart3, MessageSquare,
   CheckCircle, Loader2, ArrowRight, Send, AlertCircle,
   Twitter, ChevronRight, Zap, Target, TrendingUp, AlertTriangle,
-  Download, RefreshCw, Eye, EyeOff, Settings, Terminal
+  Download, RefreshCw, Eye, EyeOff, Settings, Terminal,
+  Globe, Radio, Clock, Wifi, PlusCircle, Sparkles
 } from "lucide-react";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
+
+// Prediction horizons
+const PREDICTION_HORIZONS = [
+  "Next 24 hours",
+  "Next week",
+  "Next month",
+  "Next 3 months",
+  "Next 6 months",
+  "Long term (1+ year)"
+];
 
 // Skeleton Component
 const Skeleton = ({ className = "" }) => (
@@ -399,11 +410,15 @@ const SystemDashboard = ({ logs }) => {
 
 // Upload Step Component with Graph Visualization
 const UploadStep = ({ sessionId, onComplete }) => {
+  const [mode, setMode] = useState("upload"); // "upload" or "live"
   const [file, setFile] = useState(null);
   const [query, setQuery] = useState("");
+  const [topic, setTopic] = useState("");
+  const [horizon, setHorizon] = useState("Next month");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [graph, setGraph] = useState(null);
+  const [intelBrief, setIntelBrief] = useState(null);
   const [dragActive, setDragActive] = useState(false);
   const [logs, setLogs] = useState([]);
   const fileInputRef = useRef(null);
@@ -433,7 +448,7 @@ const UploadStep = ({ sessionId, onComplete }) => {
     }
   }, []);
 
-  const handleSubmit = async () => {
+  const handleUploadSubmit = async () => {
     if (!file || !query.trim()) return;
     setLoading(true);
     setError(null);
@@ -460,10 +475,47 @@ const UploadStep = ({ sessionId, onComplete }) => {
     }
   };
 
+  const handleLiveSubmit = async () => {
+    if (!topic.trim()) return;
+    setLoading(true);
+    setError(null);
+    addLog(`Fetching live data for: ${topic}...`);
+    addLog(`Prediction horizon: ${horizon}`);
+
+    try {
+      addLog("Searching web for latest information...");
+      const response = await axios.post(`${API}/sessions/${sessionId}/fetch-live`, {
+        topic: topic,
+        horizon: horizon,
+        prediction_query: query || `What will happen with ${topic} in the ${horizon.toLowerCase()}?`
+      }, { timeout: 90000 });
+      
+      addLog(`Found ${response.data.sources_count} sources`, "success");
+      addLog(`Extracted ${response.data.graph.entities?.length || 0} entities`, "success");
+      setGraph(response.data.graph);
+      setIntelBrief(response.data.intel_brief);
+    } catch (err) {
+      const errorMsg = err.response?.data?.detail || "Failed to fetch live data";
+      addLog(`Error: ${errorMsg}`, "error");
+      setError(errorMsg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSubmit = mode === "upload" ? handleUploadSubmit : handleLiveSubmit;
+
   const exampleQuestions = [
     "Will public support increase or decrease in 6 months?",
     "What is the market sentiment outlook?",
     "How will policy changes impact stakeholders?",
+  ];
+
+  const exampleTopics = [
+    "Bitcoin price movement",
+    "US Federal Reserve interest rates",
+    "AI regulation in Europe",
+    "Tesla stock outlook",
   ];
 
   if (graph) {
@@ -478,11 +530,53 @@ const UploadStep = ({ sessionId, onComplete }) => {
         <div className="space-y-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
             <div className="flex items-center gap-3 mb-4">
-              <CheckCircle className="w-5 h-5 text-emerald-400" />
-              <h3 className="text-lg font-bold text-white">Knowledge Graph Extracted</h3>
+              {mode === "live" ? (
+                <Radio className="w-5 h-5 text-green-400 animate-pulse" />
+              ) : (
+                <CheckCircle className="w-5 h-5 text-emerald-400" />
+              )}
+              <h3 className="text-lg font-bold text-white">
+                {mode === "live" ? "Live Intelligence Brief" : "Knowledge Graph Extracted"}
+              </h3>
+              {mode === "live" && (
+                <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-[10px] rounded-full border border-green-500/30 animate-pulse">
+                  LIVE
+                </span>
+              )}
             </div>
             
             <p className="text-gray-300 text-sm mb-4">{graph.summary}</p>
+            
+            {/* Intel Brief Details for Live Mode */}
+            {mode === "live" && intelBrief && (
+              <div className="mb-4 space-y-3">
+                {intelBrief.key_developments && (
+                  <div>
+                    <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Key Developments</p>
+                    <ul className="space-y-1">
+                      {intelBrief.key_developments.slice(0, 3).map((dev, i) => (
+                        <li key={i} className="text-xs text-gray-300 flex items-start gap-2">
+                          <span className="text-green-400">•</span> {dev}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {intelBrief.data_points && intelBrief.data_points.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {intelBrief.data_points.slice(0, 3).map((dp, i) => (
+                      <div key={i} className="px-2 py-1 bg-gray-950 rounded border border-gray-800">
+                        <span className="text-[10px] text-gray-500">{dp.metric}:</span>
+                        <span className="text-xs text-white ml-1">{dp.value}</span>
+                        <span className={`text-[10px] ml-1 ${dp.trend === 'up' ? 'text-green-400' : dp.trend === 'down' ? 'text-red-400' : 'text-gray-400'}`}>
+                          {dp.trend === 'up' ? '↑' : dp.trend === 'down' ? '↓' : '→'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             
             <div className="flex flex-wrap gap-2 mb-5">
               {graph.themes?.map((theme, i) => (
@@ -554,11 +648,45 @@ const UploadStep = ({ sessionId, onComplete }) => {
           </div>
           
           <h2 className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white via-blue-100 to-purple-200 mb-3">
-            Upload Your Seed Document
+            {mode === "live" ? "Live Intelligence Mode" : "Upload Your Seed Document"}
           </h2>
           <p className="text-gray-400 text-base max-w-lg mx-auto">
-            Feed the swarm with data. Our AI agents will analyze, debate, and predict outcomes.
+            {mode === "live" 
+              ? "Fetch real-time data from the web and simulate market reactions."
+              : "Feed the swarm with data. Our AI agents will analyze, debate, and predict outcomes."
+            }
           </p>
+        </div>
+      </div>
+
+      {/* Mode Toggle */}
+      <div className="flex justify-center mb-6">
+        <div className="inline-flex bg-gray-900 border border-gray-800 rounded-xl p-1">
+          <button
+            data-testid="mode-upload"
+            onClick={() => setMode("upload")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              mode === "upload"
+                ? "bg-blue-600 text-white shadow-lg"
+                : "text-gray-400 hover:text-white"
+            }`}
+          >
+            <Upload className="w-4 h-4" />
+            Document Upload
+          </button>
+          <button
+            data-testid="mode-live"
+            onClick={() => setMode("live")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              mode === "live"
+                ? "bg-gradient-to-r from-green-600 to-emerald-600 text-white shadow-lg"
+                : "text-gray-400 hover:text-white"
+            }`}
+          >
+            <Radio className="w-4 h-4" />
+            Live Intelligence
+            <span className="px-1.5 py-0.5 bg-green-500/20 text-green-400 text-[10px] rounded-full">NEW</span>
+          </button>
         </div>
       </div>
 
@@ -569,61 +697,227 @@ const UploadStep = ({ sessionId, onComplete }) => {
         </div>
       )}
 
-      {/* Upload Card */}
+      {/* Main Card */}
       <div className="relative group">
-        <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500 via-purple-500 to-emerald-500 rounded-2xl blur opacity-20 group-hover:opacity-40 transition duration-500" />
+        <div className={`absolute -inset-0.5 bg-gradient-to-r ${mode === "live" ? "from-green-500 via-emerald-500 to-cyan-500" : "from-blue-500 via-purple-500 to-emerald-500"} rounded-2xl blur opacity-20 group-hover:opacity-40 transition duration-500`} />
         <div className="relative bg-gray-900/90 backdrop-blur-xl border border-gray-800 rounded-2xl p-8">
-          <div
-            data-testid="upload-dropzone"
-            onClick={() => fileInputRef.current?.click()}
-            onDragEnter={handleDrag}
-            onDragLeave={handleDrag}
-            onDragOver={handleDrag}
-            onDrop={handleDrop}
-            className={`relative border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-all duration-300 ${
-              dragActive
-                ? "border-blue-400 bg-blue-500/10 scale-[1.02]"
-                : file
-                ? "border-emerald-400 bg-emerald-500/10"
-                : "border-gray-600 hover:border-blue-400 bg-gray-950/50 hover:bg-blue-500/5"
-            }`}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".pdf,.txt,.docx,.md,.png,.jpg,.jpeg,.webp,.gif"
-              onChange={(e) => {
-                if (e.target.files?.[0]) {
-                  setFile(e.target.files[0]);
-                  addLog(`File selected: ${e.target.files[0].name}`, "success");
-                }
-              }}
-              className="hidden"
-            />
-            {file ? (
-              <div className="flex flex-col items-center gap-3">
-                <div className="w-16 h-16 rounded-full bg-emerald-500/20 flex items-center justify-center">
-                  <FileText className="w-8 h-8 text-emerald-400" />
-                </div>
-                <div>
-                  <p className="text-white font-semibold text-lg">{file.name}</p>
-                  <p className="text-sm text-emerald-400">{(file.size / 1024).toFixed(1)} KB • Ready to process</p>
+          
+          {mode === "upload" ? (
+            /* Upload Mode Content */
+            <>
+              <div
+                data-testid="upload-dropzone"
+                onClick={() => fileInputRef.current?.click()}
+                onDragEnter={handleDrag}
+                onDragLeave={handleDrag}
+                onDragOver={handleDrag}
+                onDrop={handleDrop}
+                className={`relative border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-all duration-300 ${
+                  dragActive
+                    ? "border-blue-400 bg-blue-500/10 scale-[1.02]"
+                    : file
+                    ? "border-emerald-400 bg-emerald-500/10"
+                    : "border-gray-600 hover:border-blue-400 bg-gray-950/50 hover:bg-blue-500/5"
+                }`}
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.txt,.docx,.md,.png,.jpg,.jpeg,.webp,.gif"
+                  onChange={(e) => {
+                    if (e.target.files?.[0]) {
+                      setFile(e.target.files[0]);
+                      addLog(`File selected: ${e.target.files[0].name}`, "success");
+                    }
+                  }}
+                  className="hidden"
+                />
+                {file ? (
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="w-16 h-16 rounded-full bg-emerald-500/20 flex items-center justify-center">
+                      <FileText className="w-8 h-8 text-emerald-400" />
+                    </div>
+                    <div>
+                      <p className="text-white font-semibold text-lg">{file.name}</p>
+                      <p className="text-sm text-emerald-400">{(file.size / 1024).toFixed(1)} KB • Ready to process</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center gap-4">
+                    <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center border border-blue-500/20">
+                      <Upload className="w-10 h-10 text-blue-400" />
+                    </div>
+                    <div>
+                      <p className="text-white font-semibold text-lg mb-1">Drop your file here or click to browse</p>
+                      <p className="text-sm text-gray-500">PDF, TXT, DOCX, MD, or Images (max 10MB)</p>
+                    </div>
+                    <div className="flex flex-wrap justify-center gap-2 mt-2">
+                      {['📄 PDF', '📝 TXT', '📊 DOCX', '🖼️ Images'].map((type) => (
+                        <span key={type} className="px-3 py-1 bg-gray-800/50 text-gray-400 text-xs rounded-full">
+                          {type}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Prediction Question */}
+              <div className="mt-6">
+                <label className="block text-sm font-semibold text-white mb-2">
+                  🎯 Prediction Question
+                </label>
+                <textarea
+                  data-testid="prediction-query-input"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="What do you want to predict? Be specific..."
+                  className="w-full h-24 px-4 py-3 bg-gray-950 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 resize-none transition-all"
+                />
+                
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <span className="text-xs text-gray-500 mr-2">Try:</span>
+                  {exampleQuestions.map((q, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setQuery(q)}
+                      className="text-xs px-3 py-1.5 bg-gray-800 hover:bg-blue-500/20 text-gray-400 hover:text-blue-300 rounded-full transition-all duration-200 border border-transparent hover:border-blue-500/30"
+                    >
+                      {q}
+                    </button>
+                  ))}
                 </div>
               </div>
-            ) : (
-              <div className="flex flex-col items-center gap-4">
-                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center border border-blue-500/20">
-                  <Upload className="w-10 h-10 text-blue-400" />
-                </div>
+
+              {/* Submit Button */}
+              <button
+                data-testid="extract-graph-button"
+                onClick={handleSubmit}
+                disabled={!file || !query.trim() || loading}
+                className="w-full mt-6 py-4 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:from-gray-700 disabled:to-gray-700 disabled:cursor-not-allowed text-white font-bold rounded-xl flex items-center justify-center gap-3 transition-all duration-300 shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 disabled:shadow-none"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span>Analyzing Document...</span>
+                  </>
+                ) : (
+                  <>
+                    <Zap className="w-5 h-5" />
+                    <span>Extract Knowledge Graph</span>
+                    <ArrowRight className="w-5 h-5" />
+                  </>
+                )}
+              </button>
+            </>
+          ) : (
+            /* Live Intelligence Mode Content */
+            <>
+              <div className="space-y-6">
+                {/* Topic Input */}
                 <div>
-                  <p className="text-white font-semibold text-lg mb-1">Drop your file here or click to browse</p>
-                  <p className="text-sm text-gray-500">PDF, TXT, DOCX, MD, or Images (max 10MB)</p>
+                  <label className="block text-sm font-semibold text-white mb-2 flex items-center gap-2">
+                    <Globe className="w-4 h-4 text-green-400" />
+                    Topic to Track
+                  </label>
+                  <input
+                    data-testid="topic-input"
+                    type="text"
+                    value={topic}
+                    onChange={(e) => setTopic(e.target.value)}
+                    placeholder="e.g., Bitcoin price, Tesla earnings, Fed interest rate decision..."
+                    className="w-full px-4 py-3 bg-gray-950 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-green-500 focus:ring-2 focus:ring-green-500/20 transition-all"
+                  />
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <span className="text-xs text-gray-500 mr-2">Popular:</span>
+                    {exampleTopics.map((t, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setTopic(t)}
+                        className="text-xs px-3 py-1.5 bg-gray-800 hover:bg-green-500/20 text-gray-400 hover:text-green-300 rounded-full transition-all duration-200 border border-transparent hover:border-green-500/30"
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div className="flex flex-wrap justify-center gap-2 mt-2">
-                  {['📄 PDF', '📝 TXT', '📊 DOCX', '🖼️ Images'].map((type) => (
-                    <span key={type} className="px-3 py-1 bg-gray-800/50 text-gray-400 text-xs rounded-full">
-                      {type}
-                    </span>
+
+                {/* Prediction Horizon */}
+                <div>
+                  <label className="block text-sm font-semibold text-white mb-2 flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-green-400" />
+                    Prediction Horizon
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {PREDICTION_HORIZONS.map((h) => (
+                      <button
+                        key={h}
+                        onClick={() => setHorizon(h)}
+                        className={`px-3 py-2 rounded-lg text-sm transition-all ${
+                          horizon === h
+                            ? "bg-green-600 text-white"
+                            : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white"
+                        }`}
+                      >
+                        {h}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Custom Prediction Question (Optional) */}
+                <div>
+                  <label className="block text-sm font-semibold text-white mb-2 flex items-center gap-2">
+                    🎯 Custom Question <span className="text-gray-500 font-normal">(optional)</span>
+                  </label>
+                  <input
+                    data-testid="live-query-input"
+                    type="text"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Leave blank for auto-generated question..."
+                    className="w-full px-4 py-3 bg-gray-950 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-green-500 focus:ring-2 focus:ring-green-500/20 transition-all"
+                  />
+                </div>
+
+                {/* What Live Mode Does */}
+                <div className="bg-green-500/5 border border-green-500/20 rounded-xl p-4">
+                  <h4 className="text-sm font-semibold text-green-400 mb-2 flex items-center gap-2">
+                    <Sparkles className="w-4 h-4" />
+                    What Live Intelligence Does
+                  </h4>
+                  <ul className="text-xs text-gray-400 space-y-1">
+                    <li className="flex items-center gap-2"><Wifi className="w-3 h-3 text-green-400" /> Fetches latest news and data from the web</li>
+                    <li className="flex items-center gap-2"><Users className="w-3 h-3 text-green-400" /> Creates topic-specialized agent personas</li>
+                    <li className="flex items-center gap-2"><TrendingUp className="w-3 h-3 text-green-400" /> Generates intelligence brief with key metrics</li>
+                  </ul>
+                </div>
+              </div>
+
+              {/* Submit Button */}
+              <button
+                data-testid="fetch-live-button"
+                onClick={handleSubmit}
+                disabled={!topic.trim() || loading}
+                className="w-full mt-6 py-4 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 disabled:from-gray-700 disabled:to-gray-700 disabled:cursor-not-allowed text-white font-bold rounded-xl flex items-center justify-center gap-3 transition-all duration-300 shadow-lg shadow-green-500/25 hover:shadow-green-500/40 disabled:shadow-none"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span>Fetching Live Data...</span>
+                  </>
+                ) : (
+                  <>
+                    <Radio className="w-5 h-5" />
+                    <span>Fetch & Analyze</span>
+                    <ArrowRight className="w-5 h-5" />
+                  </>
+                )}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
                   ))}
                 </div>
               </div>

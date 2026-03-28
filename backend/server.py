@@ -65,6 +65,43 @@ class ChatRequest(BaseModel):
     target_id: str  # agent_id or "report_agent"
     message: str
 
+class FetchLiveRequest(BaseModel):
+    topic: str
+    horizon: str = "Next month"
+    prediction_query: Optional[str] = ""
+
+class InjectVariableRequest(BaseModel):
+    variable: str
+    num_new_rounds: int = Field(default=2, ge=1, le=5)
+
+# Prediction horizons
+PREDICTION_HORIZONS = [
+    "Next 24 hours",
+    "Next week", 
+    "Next month",
+    "Next 3 months",
+    "Next 6 months",
+    "Long term (1+ year)"
+]
+
+# Topic categories for agent customization
+TOPIC_CATEGORIES = {
+    "financial": ["stock", "market", "crypto", "bitcoin", "trading", "investment", "economy", "fed", "interest rate", "inflation"],
+    "political": ["election", "vote", "congress", "senate", "president", "policy", "law", "democrat", "republican", "legislation"],
+    "geopolitical": ["war", "conflict", "military", "treaty", "sanctions", "diplomacy", "nato", "un", "border"],
+    "sports": ["game", "match", "championship", "player", "team", "league", "score", "tournament", "coach"],
+    "tech": ["ai", "startup", "tech", "software", "app", "launch", "product", "innovation", "company"],
+    "social_cultural": ["trend", "viral", "culture", "social", "celebrity", "movement", "protest"]
+}
+
+def detect_topic_category(topic: str) -> str:
+    """Detect the category of a topic for agent customization"""
+    topic_lower = topic.lower()
+    for category, keywords in TOPIC_CATEGORIES.items():
+        if any(kw in topic_lower for kw in keywords):
+            return category
+    return "general"
+
 
 def clean_json_response(text: str) -> str:
     """Strip markdown code fences and think tags from Claude responses"""
@@ -74,6 +111,59 @@ def clean_json_response(text: str) -> str:
     text = re.sub(r'```json\s*', '', text)
     text = re.sub(r'```\s*', '', text)
     return text.strip()
+
+
+async def fetch_web_data(topic: str, horizon: str) -> dict:
+    """Fetch live web data for a topic using DuckDuckGo search"""
+    import urllib.parse
+    
+    search_queries = [
+        f"{topic} latest news today",
+        f"{topic} analysis expert opinion",
+        f"{topic} statistics data 2025",
+        f"{topic} public reaction sentiment",
+        f"{topic} key stakeholders positions"
+    ]
+    
+    all_results = []
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for query in search_queries[:3]:  # Limit to 3 searches
+            try:
+                # Use DuckDuckGo HTML search
+                encoded_query = urllib.parse.quote(query)
+                url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
+                
+                response = await client.get(url, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                })
+                
+                if response.status_code == 200:
+                    # Extract text snippets from results
+                    html = response.text
+                    # Simple extraction of result snippets
+                    import re
+                    snippets = re.findall(r'class="result__snippet"[^>]*>([^<]+)', html)
+                    titles = re.findall(r'class="result__a"[^>]*>([^<]+)', html)
+                    
+                    for i, (title, snippet) in enumerate(zip(titles[:5], snippets[:5])):
+                        all_results.append({
+                            "query": query,
+                            "title": title.strip(),
+                            "snippet": snippet.strip()
+                        })
+                        
+            except Exception as e:
+                logger.warning(f"Search failed for query '{query}': {e}")
+                continue
+            
+            await asyncio.sleep(0.5)  # Rate limiting
+    
+    return {
+        "results": all_results,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "query_count": len(search_queries)
+    }
 
 
 async def call_claude(system_prompt: str, user_prompt: str, max_tokens: int = 3000, image_data: dict = None, retries: int = 3) -> str:
@@ -218,6 +308,10 @@ async def create_session():
         "agents_json": None,
         "report_json": None,
         "prediction_query": None,
+        "data_mode": "upload",  # 'upload' or 'live'
+        "topic": None,
+        "intel_brief": None,
+        "fetched_at": None,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
@@ -336,6 +430,262 @@ Extract 8-20 entities and 10-25 relationships relevant to the prediction questio
     return {"status": "graph_ready", "graph": graph}
 
 
+@api_router.post("/sessions/{session_id}/fetch-live")
+async def fetch_live_data(session_id: str, request: FetchLiveRequest):
+    """Fetch live web data and generate intelligence brief for Live Intelligence mode"""
+    session = await db.sessions.find_one({"id": session_id})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    topic = request.topic
+    horizon = request.horizon
+    prediction_query = request.prediction_query or f"What will happen with {topic} in the {horizon.lower()}?"
+    
+    # Fetch live web data
+    logger.info(f"Fetching live data for topic: {topic}")
+    web_data = await fetch_web_data(topic, horizon)
+    
+    if not web_data.get("results"):
+        raise HTTPException(status_code=400, detail="Could not fetch live data. Please try a different topic.")
+    
+    # Build context from web results
+    context_parts = []
+    for result in web_data["results"][:10]:
+        context_parts.append(f"• {result['title']}: {result['snippet']}")
+    web_context = "\n".join(context_parts)
+    
+    # Generate intelligence brief using Claude
+    system_prompt = """You are an intelligence analyst creating a brief on a current topic. Based on the web data provided, create a structured intelligence brief. Respond ONLY with valid JSON, no markdown fences."""
+    
+    user_prompt = f"""Topic: {topic}
+Prediction Horizon: {horizon}
+Prediction Question: {prediction_query}
+
+Live Web Data:
+{web_context}
+
+Generate a comprehensive intelligence brief. Return JSON:
+{{
+  "summary": "3-4 sentence executive summary of the current situation",
+  "key_developments": ["recent development 1", "recent development 2", "recent development 3"],
+  "stakeholders": [
+    {{"name": "Stakeholder Name", "position": "Their current stance or action", "influence": "high|medium|low"}}
+  ],
+  "data_points": [
+    {{"metric": "Key metric or stat", "value": "Current value", "trend": "up|down|stable"}}
+  ],
+  "themes": ["theme1", "theme2", "theme3"],
+  "entities": [
+    {{
+      "id": "e1",
+      "name": "Entity Name",
+      "type": "person|organization|faction|concept|event",
+      "description": "Brief description based on current data",
+      "stance": "positive|negative|neutral|conflicted"
+    }}
+  ],
+  "relationships": [
+    {{"source": "e1", "target": "e2", "label": "relationship", "weight": 0.8}}
+  ],
+  "uncertainty_factors": ["factor that could change outcomes"],
+  "confidence_level": "high|medium|low"
+}}
+Extract 10-20 entities and 15-30 relationships based on the live data."""
+
+    try:
+        response = await call_claude(system_prompt, user_prompt, max_tokens=4000)
+        cleaned = clean_json_response(response)
+        intel_brief = json.loads(cleaned)
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON parsing error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to parse intelligence brief from AI response")
+    except Exception as e:
+        logger.error(f"Claude API error: {e}")
+        raise HTTPException(status_code=500, detail=f"AI processing error: {str(e)}")
+    
+    # Create graph structure from intel brief
+    graph = {
+        "summary": intel_brief.get("summary", ""),
+        "themes": intel_brief.get("themes", []),
+        "entities": intel_brief.get("entities", []),
+        "relationships": intel_brief.get("relationships", [])
+    }
+    
+    # Update session with live data
+    await db.sessions.update_one(
+        {"id": session_id},
+        {
+            "$set": {
+                "status": "graph_ready",
+                "data_mode": "live",
+                "topic": topic,
+                "prediction_query": prediction_query,
+                "graph_json": json.dumps(graph),
+                "intel_brief": json.dumps(intel_brief),
+                "fetched_at": web_data["fetched_at"],
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }
+        }
+    )
+    
+    return {
+        "status": "graph_ready",
+        "topic": topic,
+        "graph": graph,
+        "intel_brief": intel_brief,
+        "fetched_at": web_data["fetched_at"],
+        "sources_count": len(web_data["results"])
+    }
+
+
+@api_router.post("/sessions/{session_id}/refresh-intel")
+async def refresh_intel(session_id: str):
+    """Refresh live intelligence data for an existing session"""
+    session = await db.sessions.find_one({"id": session_id})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.get("data_mode") != "live":
+        raise HTTPException(status_code=400, detail="Session is not in Live Intelligence mode")
+    
+    topic = session.get("topic")
+    if not topic:
+        raise HTTPException(status_code=400, detail="No topic found in session")
+    
+    # Re-fetch with same topic
+    request = FetchLiveRequest(topic=topic, prediction_query=session.get("prediction_query", ""))
+    return await fetch_live_data(session_id, request)
+
+
+@api_router.post("/sessions/{session_id}/inject-variable")
+async def inject_variable(session_id: str, request: InjectVariableRequest):
+    """Inject a new variable/event mid-simulation and run additional rounds"""
+    session = await db.sessions.find_one({"id": session_id})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.get("status") not in ["simulation_done", "complete"]:
+        raise HTTPException(status_code=400, detail="Simulation must be complete before injecting variables")
+    
+    agents = json.loads(session["agents_json"])
+    graph = json.loads(session["graph_json"])
+    query = session["prediction_query"]
+    variable = request.variable
+    num_rounds = request.num_new_rounds
+    
+    # Get current max round
+    max_round_doc = await db.sim_posts.find_one(
+        {"session_id": session_id},
+        sort=[("round", -1)]
+    )
+    start_round = (max_round_doc["round"] if max_round_doc else 0) + 1
+    
+    # Update session status
+    await db.sessions.update_one(
+        {"id": session_id},
+        {
+            "$set": {
+                "status": "simulating",
+                "injected_variable": variable,
+                "current_round": start_round,
+                "total_rounds": start_round + num_rounds - 1,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }
+        }
+    )
+    
+    # Run additional rounds with the new variable
+    for round_num in range(start_round, start_round + num_rounds):
+        await db.sessions.update_one(
+            {"id": session_id},
+            {"$set": {"current_round": round_num}}
+        )
+        
+        # Select agents to respond
+        active_agents = random.sample(agents, k=max(3, int(len(agents) * random.uniform(0.6, 0.8))))
+        
+        # Get recent posts for context
+        recent_posts = await db.sim_posts.find(
+            {"session_id": session_id}
+        ).sort("_id", -1).limit(10).to_list(10)
+        
+        recent_context = "\n".join([
+            f"{p['platform']}: {p['agent_name']}: {p['content']}"
+            for p in reversed(recent_posts)
+        ]) if recent_posts else ""
+        
+        for agent in active_agents:
+            platform = agent.get("platform_preference", random.choice(["Twitter", "Reddit"]))
+            
+            system_prompt = f"""You are playing the role of {agent['name']}. A NEW DEVELOPMENT has just occurred: "{variable}". React to this breaking news while staying in character."""
+            
+            platform_instruction = "Keep under 280 characters." if platform == "Twitter" else "Write 2-4 sentences."
+            
+            user_prompt = f"""You are: {agent['name']} ({agent['occupation']})
+Personality: {agent['personality_type']}
+Your previous stance: {agent['initial_stance']}
+Topic: {query}
+
+BREAKING NEWS: {variable}
+
+Recent discussion:
+{recent_context}
+
+Platform: {platform}
+{platform_instruction}
+
+React to this new development as {agent['name']}. Output ONLY your post."""
+
+            try:
+                response = await call_claude(system_prompt, user_prompt, max_tokens=200)
+                content = response.strip()
+                
+                post = {
+                    "session_id": session_id,
+                    "round": round_num,
+                    "agent_id": agent["id"],
+                    "agent_name": agent["name"],
+                    "agent_emoji": agent.get("avatar_emoji", "🧑"),
+                    "platform": platform,
+                    "content": content,
+                    "post_type": "reaction",
+                    "injected_variable": variable,
+                    "created_at": datetime.now(timezone.utc).isoformat()
+                }
+                await db.sim_posts.insert_one(post)
+                
+            except Exception as e:
+                logger.error(f"Error generating reaction for {agent['name']}: {e}")
+                continue
+            
+            await asyncio.sleep(0.5)
+    
+    # Update session status
+    await db.sessions.update_one(
+        {"id": session_id},
+        {
+            "$set": {
+                "status": "simulation_done",
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }
+        }
+    )
+    
+    # Get updated post count
+    post_count = await db.sim_posts.count_documents({"session_id": session_id})
+    
+    return {
+        "status": "simulation_done",
+        "injected_variable": variable,
+        "new_rounds": num_rounds,
+        "total_posts": post_count
+    }
+
+
+@api_router.get("/prediction-horizons")
+async def get_prediction_horizons():
+    """Get available prediction horizons"""
+    return {"horizons": PREDICTION_HORIZONS}
+
+
 @api_router.post("/sessions/{session_id}/generate-agents")
 async def generate_agents(session_id: str, request: GenerateAgentsRequest):
     """Generate AI agent personas based on knowledge graph"""
@@ -348,8 +698,31 @@ async def generate_agents(session_id: str, request: GenerateAgentsRequest):
     graph = json.loads(session["graph_json"])
     query = session["prediction_query"]
     num_agents = request.num_agents
+    data_mode = session.get("data_mode", "upload")
+    topic = session.get("topic", "")
+    
+    # Detect topic category for specialized agents
+    topic_category = detect_topic_category(topic or query)
     
     entities_summary = json.dumps([{"name": e["name"], "type": e["type"]} for e in graph.get("entities", [])])
+    
+    # Add intel brief context for live mode
+    intel_context = ""
+    if data_mode == "live" and session.get("intel_brief"):
+        intel_brief = json.loads(session["intel_brief"])
+        stakeholders = intel_brief.get("stakeholders", [])
+        if stakeholders:
+            intel_context = f"\nKey Stakeholders from live data: {json.dumps(stakeholders[:5])}"
+    
+    # Category-specific agent guidance
+    category_guidance = {
+        "financial": "Include: financial analysts, retail investors, institutional traders, economists, financial journalists, fintech founders",
+        "political": "Include: political analysts, voters from different demographics, campaign strategists, journalists, activists, lobbyists",
+        "geopolitical": "Include: foreign policy experts, military analysts, diplomats, regional specialists, journalists, affected citizens",
+        "sports": "Include: sports analysts, fans, coaches, former players, sports journalists, betting analysts",
+        "tech": "Include: tech analysts, startup founders, engineers, VCs, tech journalists, early adopters, skeptics",
+        "social_cultural": "Include: cultural critics, influencers, activists, everyday people, researchers, journalists"
+    }.get(topic_category, "Include diverse perspectives from various backgrounds")
     
     system_prompt = """You are a simulation designer. Create realistic agent personas for a social prediction simulation. Respond ONLY with valid JSON, no markdown fences."""
     
@@ -357,6 +730,10 @@ async def generate_agents(session_id: str, request: GenerateAgentsRequest):
 Key Themes: {', '.join(graph.get('themes', []))}
 Entities: {entities_summary}
 Prediction Question: {query}
+Data Mode: {data_mode.upper()} {"(Live real-time data)" if data_mode == "live" else "(Document-based)"}
+{intel_context}
+
+Agent Guidance: {category_guidance}
 
 Create exactly {num_agents} diverse agent personas. Return JSON:
 {{
@@ -366,17 +743,17 @@ Create exactly {num_agents} diverse agent personas. Return JSON:
       "name": "Full Name",
       "avatar_emoji": "single emoji",
       "age": 35,
-      "occupation": "specific job",
-      "background": "2-sentence backstory",
+      "occupation": "specific job relevant to the topic",
+      "background": "2-sentence backstory explaining their expertise/stake in this topic",
       "personality_type": "Skeptic|Optimist|Insider|Contrarian|Expert|Neutral|Activist|Pragmatist",
-      "initial_stance": "Their position on the topic (1-2 sentences)",
+      "initial_stance": "Their specific position on the current situation (1-2 sentences)",
       "influence_level": 7,
       "platform_preference": "Twitter|Reddit",
       "communication_style": "analytical|emotional|aggressive|diplomatic|satirical|factual"
     }}
   ]
 }}
-Make agents feel like real distinct people. Vary demographics, professions, viewpoints."""
+Make agents feel like real distinct people. Vary demographics, professions, viewpoints. Ensure agents have SPECIFIC knowledge relevant to the topic."""
 
     try:
         response = await call_claude(system_prompt, user_prompt, max_tokens=4000)

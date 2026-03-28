@@ -43,7 +43,7 @@ const PERSONALITY_COLORS = {
 };
 
 // Header Component
-const Header = () => (
+const Header = ({ onNewSimulation, hasSession }) => (
   <header className="sticky top-0 z-50 w-full border-b border-gray-800 bg-gray-950/80 backdrop-blur-xl">
     <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8">
       <div className="flex items-center justify-between h-14">
@@ -54,6 +54,16 @@ const Header = () => (
             <p className="text-[10px] text-gray-500 tracking-wide">Swarm Intelligence Prediction Engine</p>
           </div>
         </div>
+        {hasSession && (
+          <button
+            data-testid="new-simulation-button"
+            onClick={onNewSimulation}
+            className="flex items-center gap-2 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-sm text-gray-300 hover:text-white transition-colors"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>New Simulation</span>
+          </button>
+        )}
       </div>
     </div>
   </header>
@@ -1448,19 +1458,35 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  const createNewSession = async () => {
+    setLoading(true);
+    try {
+      const response = await axios.post(`${API}/sessions`);
+      setSessionId(response.data.session_id);
+      // Reset all state
+      setCurrentStep(1);
+      setCompletedSteps([]);
+      setGraph(null);
+      setAgents(null);
+      setPosts(null);
+      setReport(null);
+      setError(null);
+    } catch (err) {
+      setError("Failed to create session. Please refresh the page.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const createSession = async () => {
-      try {
-        const response = await axios.post(`${API}/sessions`);
-        setSessionId(response.data.session_id);
-      } catch (err) {
-        setError("Failed to create session. Please refresh the page.");
-      } finally {
-        setLoading(false);
-      }
-    };
-    createSession();
+    createNewSession();
   }, []);
+
+  const handleNewSimulation = () => {
+    if (window.confirm("Start a new simulation? All current progress will be lost.")) {
+      createNewSession();
+    }
+  };
 
   const handleStepComplete = (step, data) => {
     setCompletedSteps((prev) => [...new Set([...prev, step])]);
@@ -1517,7 +1543,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gray-950">
-      <Header />
+      <Header onNewSimulation={handleNewSimulation} hasSession={!!sessionId} />
       
       <main className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <StepIndicator

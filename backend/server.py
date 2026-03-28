@@ -437,7 +437,9 @@ async def fetch_live_data(session_id: str, request: FetchLiveRequest):
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     
-    topic = request.topic
+    topic = request.topic.strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="Topic cannot be empty")
     horizon = request.horizon
     prediction_query = request.prediction_query or f"What will happen with {topic} in the {horizon.lower()}?"
     

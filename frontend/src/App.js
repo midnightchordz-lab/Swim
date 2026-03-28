@@ -1090,14 +1090,34 @@ const AgentCard = ({ agent, showPreview = false }) => (
 // Agent Step Component with Preview
 const AgentStep = ({ sessionId, graph, onComplete }) => {
   const [numAgents, setNumAgents] = useState(20);
+  const [cloneMultiplier, setCloneMultiplier] = useState(10);
+  const [silentPop, setSilentPop] = useState(5000);
+  const [popConfigured, setPopConfigured] = useState(false);
   const [loading, setLoading] = useState(false);
   const [agents, setAgents] = useState(null);
   const [error, setError] = useState(null);
   const [logs, setLogs] = useState([]);
 
+  const totalPop = numAgents + (numAgents * cloneMultiplier) + silentPop;
+  const llmCalls = Math.ceil(numAgents / 10);
+
   const addLog = (message, type = "info") => {
     const time = new Date().toLocaleTimeString('en-US', { hour12: false });
     setLogs(prev => [...prev.slice(-20), { time, message, type }]);
+  };
+
+  const configurePopulation = async () => {
+    try {
+      const res = await axios.post(`${API}/sessions/${sessionId}/configure-population`, {
+        tier1_agents: numAgents,
+        clone_multiplier: cloneMultiplier,
+        silent_population: silentPop,
+      });
+      addLog(`Population configured: ${res.data.total_simulated.toLocaleString()} total`, "success");
+      setPopConfigured(true);
+    } catch (err) {
+      addLog(`Failed to configure population: ${err.message}`, "error");
+    }
   };
 
   const handleGenerate = async () => {
@@ -1122,6 +1142,8 @@ const AgentStep = ({ sessionId, graph, onComplete }) => {
             addLog(`Successfully created ${data.agents.length} agents`, "success");
             setAgents(data.agents);
             setLoading(false);
+            // Auto-configure population
+            configurePopulation();
           } else if (data.status === "failed") {
             clearInterval(pollInterval);
             const errMsg = data.error || "Agent generation failed";
@@ -1267,11 +1289,40 @@ const AgentStep = ({ sessionId, graph, onComplete }) => {
             </div>
           </div>
 
+          {/* Population Scale */}
+          <div data-testid="population-scale" className="bg-gray-900/50 border border-gray-800 rounded-xl p-4 mb-4">
+            <h3 className="text-xs text-gray-400 uppercase tracking-wider mb-3">Population Scale</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[10px] text-gray-500 block mb-1">Clone Multiplier ({cloneMultiplier}x)</label>
+                <input data-testid="clone-multiplier" type="range" min="1" max="20" value={cloneMultiplier}
+                  onChange={(e) => setCloneMultiplier(parseInt(e.target.value))}
+                  className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500" />
+                <div className="flex justify-between text-[10px] text-gray-600"><span>1x</span><span>20x</span></div>
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500 block mb-1">Silent Population ({silentPop.toLocaleString()})</label>
+                <input data-testid="silent-population" type="range" min="0" max="50000" step="1000" value={silentPop}
+                  onChange={(e) => setSilentPop(parseInt(e.target.value))}
+                  className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500" />
+                <div className="flex justify-between text-[10px] text-gray-600"><span>0</span><span>50K</span></div>
+              </div>
+            </div>
+            <div className="mt-3 text-center">
+              <span className="text-xs text-gray-400">
+                <span className="text-blue-400 font-bold">{numAgents}</span> LLM
+                {" x "}<span className="text-purple-400 font-bold">{cloneMultiplier}</span> clones
+                {" + "}<span className="text-cyan-400 font-bold">{silentPop.toLocaleString()}</span> silent
+                {" = "}<span className="text-white font-bold text-sm">{totalPop.toLocaleString()}</span> simulated
+              </span>
+            </div>
+          </div>
+
           {/* Estimate */}
           <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 mb-4">
             <div className="flex items-center gap-2 text-amber-400 text-xs">
               <Settings className="w-3.5 h-3.5" />
-              <span>Estimated time: ~{Math.ceil(numAgents / 10) * 15} seconds</span>
+              <span>~{llmCalls} Claude calls/round (same cost as {numAgents} agents)</span>
             </div>
           </div>
 
@@ -1339,6 +1390,22 @@ const PostCard = ({ post, isReply }) => (
           )}
         </div>
         <p className="text-gray-300 text-xs">{post.content}</p>
+        {/* Reaction counts from silent population */}
+        {post.tier1_reactions && (
+          <div className="flex gap-3 mt-1.5 text-[10px] text-gray-500">
+            <span>&#128077; {post.tier1_reactions.likes?.toLocaleString()}</span>
+            <span>&#128260; {post.tier1_reactions.shares?.toLocaleString()}</span>
+            {post.reach_score != null && (
+              <span className={post.viral ? "text-amber-400 font-semibold" : ""}>&#9889; {(post.reach_score * 100).toFixed(1)}% reach</span>
+            )}
+          </div>
+        )}
+        {post.viral && (
+          <span className="inline-flex mt-1 text-[10px] bg-amber-500/20 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded-full">VIRAL</span>
+        )}
+        {post.agent_tier === "clone" && (
+          <span className="inline-flex mt-1 text-[10px] bg-purple-500/10 text-purple-300 px-1.5 py-0.5 rounded-full">ECHO</span>
+        )}
       </div>
     </div>
   </div>
@@ -1394,6 +1461,8 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
             emotionalSummary: statusRes.data.emotional_summary,
             networkStats: statusRes.data.network_stats,
             roundNarratives: statusRes.data.round_narratives || [],
+            populationSize: statusRes.data.population_size || 0,
+            tierBreakdown: statusRes.data.tier_breakdown,
           });
         }
         
@@ -1546,13 +1615,21 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
               </div>
             </div>
           )}
-          {/* Network Stats */}
-          {simMeta.networkStats && (
+          {/* Network & Population */}
+          {(simMeta.networkStats || simMeta.tierBreakdown) && (
             <div className="bg-gray-900/50 rounded-xl p-3 border border-gray-800">
-              <p className="text-xs text-gray-400 uppercase tracking-wider mb-2">Network</p>
-              <div className="flex gap-2 text-xs">
-                <span className="bg-purple-500/15 text-purple-400 px-2 py-1 rounded">{simMeta.networkStats.hub_count} hubs</span>
-                <span className="bg-gray-500/15 text-gray-400 px-2 py-1 rounded">{simMeta.networkStats.peripheral_count} peripheral</span>
+              <p className="text-xs text-gray-400 uppercase tracking-wider mb-2">Population</p>
+              <div className="flex flex-wrap gap-1.5 text-xs">
+                {simMeta.tierBreakdown && (
+                  <>
+                    <span className="bg-blue-500/15 text-blue-400 px-2 py-1 rounded">{simMeta.tierBreakdown.tier1} LLM</span>
+                    <span className="bg-purple-500/15 text-purple-400 px-2 py-1 rounded">{simMeta.tierBreakdown.tier2} echo</span>
+                    <span className="bg-cyan-500/15 text-cyan-400 px-2 py-1 rounded">{(simMeta.tierBreakdown.tier3 || 0).toLocaleString()} reacting</span>
+                  </>
+                )}
+                {simMeta.populationSize > 0 && (
+                  <span className="bg-white/10 text-white px-2 py-1 rounded font-semibold">{simMeta.populationSize.toLocaleString()} total</span>
+                )}
               </div>
             </div>
           )}

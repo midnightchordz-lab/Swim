@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 import json
 import re
 import random
+import math
 import asyncio
 import io
 
@@ -25,6 +26,9 @@ from agents import (
     assign_network_properties, get_visible_posts, get_network_stats,
     initialise_emotions, spread_emotions,
     get_emotional_temperature, get_emotion_label,
+    generate_clones, generate_silent_population,
+    generate_clone_posts, calculate_silent_reactions,
+    get_agent_feed, get_demographic_breakdown,
 )
 
 # Load environment variables first
@@ -77,6 +81,11 @@ class FetchLiveRequest(BaseModel):
     topic: str
     horizon: str = "Next month"
     prediction_query: Optional[str] = ""
+
+class ConfigurePopulationRequest(BaseModel):
+    tier1_agents: int = Field(default=50, ge=10, le=100)
+    clone_multiplier: int = Field(default=10, ge=1, le=20)
+    silent_population: int = Field(default=5000, ge=0, le=100000)
 
 class InjectVariableRequest(BaseModel):
     variable: str
@@ -949,6 +958,57 @@ async def get_agent_status(session_id: str):
         return {"status": status}
 
 
+@api_router.post("/sessions/{session_id}/configure-population")
+async def configure_population(session_id: str, request: ConfigurePopulationRequest):
+    """Configure three-tier population scaling for a session."""
+    session = await db.sessions.find_one({"id": session_id})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.get("status") not in ["agents_ready", "graph_ready"]:
+        raise HTTPException(status_code=400, detail="Agents must be generated first")
+
+    tier1 = request.tier1_agents
+    multiplier = request.clone_multiplier
+    silent = request.silent_population
+    tier2 = tier1 * multiplier
+    total = tier1 + tier2 + silent
+    llm_calls = math.ceil(tier1 / 10)
+
+    # Generate clones if agents exist
+    agents = json.loads(session["agents_json"]) if session.get("agents_json") else []
+    topic = session.get("topic", session.get("prediction_query", ""))
+
+    clones = generate_clones(agents[:tier1], multiplier) if agents else []
+    silent_pop = generate_silent_population(silent, topic) if silent > 0 else {"total": 0, "segments": []}
+
+    tier_breakdown = {"tier1": min(tier1, len(agents)), "tier2": len(clones), "tier3": silent_pop.get("total", 0)}
+
+    await db.sessions.update_one(
+        {"id": session_id},
+        {"$set": {
+            "population_config": {
+                "tier1_agents": tier1,
+                "clone_multiplier": multiplier,
+                "silent_population": silent,
+            },
+            "clones_json": json.dumps(clones),
+            "silent_population": silent_pop,
+            "population_size": total,
+            "tier_breakdown": tier_breakdown,
+        }}
+    )
+
+    return {
+        "total_simulated": total,
+        "tier_breakdown": tier_breakdown,
+        "llm_calls_per_round": llm_calls,
+        "estimated_time_per_round": f"~{max(15, llm_calls * 8)} seconds",
+        "cost_equivalent": f"same as {tier1}-agent simulation",
+        "demographics": silent_pop.get("demographics", "global"),
+        "demographic_segments": len(silent_pop.get("segments", [])),
+    }
+
+
 async def run_simulation(session_id: str, num_rounds: int):
     try:
         session = await db.sessions.find_one({"id": session_id})
@@ -966,12 +1026,20 @@ async def run_simulation(session_id: str, num_rounds: int):
         network_stats = get_network_stats(agents)
         hub_ids = set(network_stats.get("hub_ids", []))
 
-        logger.info(f"[Sim] {session_id[:8]} — {len(agents)} agents, {network_stats['hub_count']} hubs")
+        # Load population tiers
+        clones = json.loads(session["clones_json"]) if session.get("clones_json") else []
+        silent_pop = session.get("silent_population", {"total": 0, "segments": []})
+        tier_breakdown = session.get("tier_breakdown", {"tier1": len(agents), "tier2": len(clones), "tier3": silent_pop.get("total", 0)})
+        total_pop = tier_breakdown.get("tier1", 0) + tier_breakdown.get("tier2", 0) + tier_breakdown.get("tier3", 0)
+
+        logger.info(f"[Sim] {session_id[:8]} — T1:{len(agents)} T2:{len(clones)} T3:{silent_pop.get('total',0)} hubs:{network_stats['hub_count']}")
 
         await db.sessions.update_one(
             {"id": session_id},
             {"$set": {"current_round": 0, "total_rounds": num_rounds,
-                      "network_stats": network_stats}}
+                      "network_stats": network_stats,
+                      "population_size": total_pop or len(agents),
+                      "tier_breakdown": tier_breakdown}}
         )
 
         all_posts = []
@@ -990,10 +1058,19 @@ async def run_simulation(session_id: str, num_rounds: int):
             active_agents = hub_agents + active_non_hub
 
             recent_posts = all_posts[-10:]
-            recent_context = "\n".join([
-                f"{p['platform']}: {p['agent_name']}: {p['content']}"
-                for p in recent_posts
-            ]) if recent_posts else "No previous posts yet."
+            # Use feed algorithm if available, else fall back
+            if all_posts and active_agents:
+                sample_agent = active_agents[0]
+                feed_posts = get_agent_feed(sample_agent, all_posts, round_num)
+                recent_context = "\n".join([
+                    f"{p['platform']}: {p['agent_name']}: {p['content']}"
+                    for p in feed_posts
+                ]) if feed_posts else "No previous posts yet."
+            else:
+                recent_context = "\n".join([
+                    f"{p['platform']}: {p['agent_name']}: {p['content']}"
+                    for p in recent_posts
+                ]) if recent_posts else "No previous posts yet."
 
             director_context = f"\nPrevious round summary: {round_narratives[-1]}" if round_narratives else ""
 
@@ -1120,6 +1197,51 @@ Return JSON array ONLY:
                         logger.error(f"[Sim] Reply error: {e}")
                     await asyncio.sleep(0.3)
 
+            # Tier 2: Generate clone echo posts
+            if clones:
+                parent_posts_map = {}
+                for p in round_posts:
+                    pid = p.get("agent_id", "")
+                    if pid not in parent_posts_map:
+                        parent_posts_map[pid] = []
+                    parent_posts_map[pid].append(p)
+
+                echo_posts = generate_clone_posts(clones, parent_posts_map, round_num)
+                echo_count = len(echo_posts)
+                for ep in echo_posts:
+                    ep["session_id"] = session_id
+                    ep["created_at"] = datetime.now(timezone.utc).isoformat()
+                if echo_posts:
+                    await db.sim_posts.insert_many(echo_posts)
+                    all_posts.extend(echo_posts)
+                    round_posts.extend(echo_posts)
+                logger.info(f"[Sim] Round {round_num}: {echo_count} clone echoes")
+
+            # Tier 3: Calculate silent population reactions
+            tier1_reactions = {}
+            if silent_pop.get("total", 0) > 0 and round_posts:
+                tier1_reactions = calculate_silent_reactions(round_posts, silent_pop, round_num)
+                # Update posts in DB with reaction data
+                for post in round_posts:
+                    key = post.get("agent_id", "") + "_" + str(post.get("round", 0))
+                    rxn = tier1_reactions.get(key, {})
+                    if rxn:
+                        echo_count_for_post = sum(1 for ep in echo_posts if ep.get("parent_id") == post.get("agent_id")) if clones else 0
+                        await db.sim_posts.update_one(
+                            {"session_id": session_id, "agent_id": post["agent_id"], "round": round_num,
+                             "content": post["content"]},
+                            {"$set": {
+                                "tier1_reactions": {"likes": rxn.get("likes", 0), "shares": rxn.get("shares", 0), "hostile": rxn.get("hostile", 0)},
+                                "tier2_echo_count": echo_count_for_post,
+                                "reach_score": rxn.get("reach_score", 0.0),
+                                "viral": rxn.get("viral", False),
+                            }},
+                        )
+                        # Update in-memory post for feed algorithm
+                        post["tier1_reactions"] = rxn
+                        post["reach_score"] = rxn.get("reach_score", 0.0)
+                        post["viral"] = rxn.get("viral", False)
+
             # Update AI state
             agents = update_beliefs(agents, round_posts, round_num)
             agents = spread_emotions(agents, round_posts, round_num)
@@ -1221,6 +1343,8 @@ async def get_simulation_status(session_id: str):
         "emotional_summary": session.get("emotional_summary"),
         "network_stats": session.get("network_stats"),
         "round_narratives": session.get("round_narratives", []),
+        "population_size": session.get("population_size", 0),
+        "tier_breakdown": session.get("tier_breakdown"),
     }
 
 

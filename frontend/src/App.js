@@ -986,20 +986,49 @@ const AgentStep = ({ sessionId, graph, onComplete }) => {
     setError(null);
     addLog(`Generating ${numAgents} agents...`);
     try {
-      const response = await axios.post(`${API}/sessions/${sessionId}/generate-agents`, {
+      // Kick off background generation
+      await axios.post(`${API}/sessions/${sessionId}/generate-agents`, {
         num_agents: numAgents,
-      }, { timeout: 120000 });
-      addLog(`Successfully created ${response.data.agents.length} agents`, "success");
-      setAgents(response.data.agents);
+      }, { timeout: 15000 });
+      addLog("Agent generation started, please wait...");
+      
+      // Poll for status
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusRes = await axios.get(`${API}/sessions/${sessionId}/agent-status`, { timeout: 10000 });
+          const data = statusRes.data;
+          
+          if (data.status === "completed") {
+            clearInterval(pollInterval);
+            addLog(`Successfully created ${data.agents.length} agents`, "success");
+            setAgents(data.agents);
+            setLoading(false);
+          } else if (data.status === "failed") {
+            clearInterval(pollInterval);
+            const errMsg = data.error || "Agent generation failed";
+            addLog(`Error: ${errMsg}`, "error");
+            setError(errMsg);
+            setLoading(false);
+          }
+        } catch (pollErr) {
+          // Polling error is transient, keep trying
+          addLog("Checking status...", "info");
+        }
+      }, 3000);
+      
+      // Safety timeout after 3 minutes
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        if (!agents) {
+          setError("Agent generation is taking too long. Please try again with fewer agents.");
+          setLoading(false);
+        }
+      }, 180000);
+      
     } catch (err) {
       const errorMsg = err.response?.data?.detail || err.message || "Failed to generate agents";
-      if (errorMsg.includes("502") || errorMsg.includes("timeout") || errorMsg.includes("Gateway")) {
-        setError("Server temporarily busy. Please try again with fewer agents or wait a moment.");
-      } else {
-        setError(errorMsg);
-      }
+      setError(errorMsg);
       addLog(`Error: ${errorMsg}`, "error");
-    } finally {
       setLoading(false);
     }
   };

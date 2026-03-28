@@ -688,47 +688,40 @@ async def get_prediction_horizons():
     return {"horizons": PREDICTION_HORIZONS}
 
 
-@api_router.post("/sessions/{session_id}/generate-agents")
-async def generate_agents(session_id: str, request: GenerateAgentsRequest):
-    """Generate AI agent personas based on knowledge graph"""
-    session = await db.sessions.find_one({"id": session_id})
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if session.get("status") not in ["graph_ready", "agents_ready"]:
-        raise HTTPException(status_code=400, detail="Knowledge graph not ready")
-    
-    graph = json.loads(session["graph_json"])
-    query = session["prediction_query"]
-    num_agents = request.num_agents
-    data_mode = session.get("data_mode", "upload")
-    topic = session.get("topic", "")
-    
-    # Detect topic category for specialized agents
-    topic_category = detect_topic_category(topic or query)
-    
-    entities_summary = json.dumps([{"name": e["name"], "type": e["type"]} for e in graph.get("entities", [])])
-    
-    # Add intel brief context for live mode
-    intel_context = ""
-    if data_mode == "live" and session.get("intel_brief"):
-        intel_brief = json.loads(session["intel_brief"])
-        stakeholders = intel_brief.get("stakeholders", [])
-        if stakeholders:
-            intel_context = f"\nKey Stakeholders from live data: {json.dumps(stakeholders[:5])}"
-    
-    # Category-specific agent guidance
-    category_guidance = {
-        "financial": "Include: financial analysts, retail investors, institutional traders, economists, financial journalists, fintech founders",
-        "political": "Include: political analysts, voters from different demographics, campaign strategists, journalists, activists, lobbyists",
-        "geopolitical": "Include: foreign policy experts, military analysts, diplomats, regional specialists, journalists, affected citizens",
-        "sports": "Include: sports analysts, fans, coaches, former players, sports journalists, betting analysts",
-        "tech": "Include: tech analysts, startup founders, engineers, VCs, tech journalists, early adopters, skeptics",
-        "social_cultural": "Include: cultural critics, influencers, activists, everyday people, researchers, journalists"
-    }.get(topic_category, "Include diverse perspectives from various backgrounds")
-    
-    system_prompt = """You are a simulation designer. Create realistic agent personas for a social prediction simulation. Respond ONLY with valid JSON, no markdown fences."""
-    
-    user_prompt = f"""World Context: {graph.get('summary', '')}
+async def run_agent_generation(session_id: str, num_agents: int):
+    """Background task to generate agents"""
+    try:
+        session = await db.sessions.find_one({"id": session_id})
+        if not session:
+            return
+        
+        graph = json.loads(session["graph_json"])
+        query = session["prediction_query"]
+        data_mode = session.get("data_mode", "upload")
+        topic = session.get("topic", "")
+        
+        topic_category = detect_topic_category(topic or query)
+        entities_summary = json.dumps([{"name": e["name"], "type": e["type"]} for e in graph.get("entities", [])])
+        
+        intel_context = ""
+        if data_mode == "live" and session.get("intel_brief"):
+            intel_brief = json.loads(session["intel_brief"])
+            stakeholders = intel_brief.get("stakeholders", [])
+            if stakeholders:
+                intel_context = f"\nKey Stakeholders from live data: {json.dumps(stakeholders[:5])}"
+        
+        category_guidance = {
+            "financial": "Include: financial analysts, retail investors, institutional traders, economists, financial journalists, fintech founders",
+            "political": "Include: political analysts, voters from different demographics, campaign strategists, journalists, activists, lobbyists",
+            "geopolitical": "Include: foreign policy experts, military analysts, diplomats, regional specialists, journalists, affected citizens",
+            "sports": "Include: sports analysts, fans, coaches, former players, sports journalists, betting analysts",
+            "tech": "Include: tech analysts, startup founders, engineers, VCs, tech journalists, early adopters, skeptics",
+            "social_cultural": "Include: cultural critics, influencers, activists, everyday people, researchers, journalists"
+        }.get(topic_category, "Include diverse perspectives from various backgrounds")
+        
+        system_prompt = """You are a simulation designer. Create realistic agent personas for a social prediction simulation. Respond ONLY with valid JSON, no markdown fences."""
+        
+        user_prompt = f"""World Context: {graph.get('summary', '')}
 Key Themes: {', '.join(graph.get('themes', []))}
 Entities: {entities_summary}
 Prediction Question: {query}
@@ -757,34 +750,76 @@ Create exactly {num_agents} diverse agent personas. Return JSON:
 }}
 Make agents feel like real distinct people. Vary demographics, professions, viewpoints. Ensure agents have SPECIFIC knowledge relevant to the topic."""
 
-    try:
         response = await call_claude(system_prompt, user_prompt, max_tokens=4000)
         cleaned = clean_json_response(response)
         agents_data = json.loads(cleaned)
         agents = agents_data.get("agents", [])
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON parsing error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to parse agents from AI response")
+        
+        for agent in agents:
+            agent["memories"] = []
+        
+        await db.sessions.update_one(
+            {"id": session_id},
+            {
+                "$set": {
+                    "status": "agents_ready",
+                    "agents_json": json.dumps(agents),
+                    "agent_gen_status": "completed",
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }
+            }
+        )
+        logger.info(f"Agent generation completed for session {session_id}: {len(agents)} agents")
+        
     except Exception as e:
-        logger.error(f"Claude API error: {e}")
-        raise HTTPException(status_code=500, detail=f"AI processing error: {str(e)}")
+        logger.error(f"Agent generation failed for session {session_id}: {e}")
+        await db.sessions.update_one(
+            {"id": session_id},
+            {
+                "$set": {
+                    "agent_gen_status": "failed",
+                    "agent_gen_error": str(e)[:200],
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }
+            }
+        )
+
+
+@api_router.post("/sessions/{session_id}/generate-agents")
+async def generate_agents(session_id: str, request: GenerateAgentsRequest):
+    """Kick off agent generation as a background task"""
+    session = await db.sessions.find_one({"id": session_id})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.get("status") not in ["graph_ready", "agents_ready"]:
+        raise HTTPException(status_code=400, detail="Knowledge graph not ready")
     
-    # Initialize agent memories
-    for agent in agents:
-        agent["memories"] = []
-    
+    # Mark as generating
     await db.sessions.update_one(
         {"id": session_id},
-        {
-            "$set": {
-                "status": "agents_ready",
-                "agents_json": json.dumps(agents),
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            }
-        }
+        {"$set": {"agent_gen_status": "generating", "agent_gen_error": None}}
     )
     
-    return {"agents": agents, "count": len(agents)}
+    asyncio.create_task(run_agent_generation(session_id, request.num_agents))
+    return {"status": "generating", "message": "Agent generation started"}
+
+
+@api_router.get("/sessions/{session_id}/agent-status")
+async def get_agent_status(session_id: str):
+    """Poll agent generation status"""
+    session = await db.sessions.find_one({"id": session_id}, {"_id": 0})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    status = session.get("agent_gen_status", "idle")
+    
+    if status == "completed" and session.get("agents_json"):
+        agents = json.loads(session["agents_json"])
+        return {"status": "completed", "agents": agents, "count": len(agents)}
+    elif status == "failed":
+        return {"status": "failed", "error": session.get("agent_gen_error", "Unknown error")}
+    else:
+        return {"status": status}
 
 
 async def run_simulation(session_id: str, num_rounds: int):

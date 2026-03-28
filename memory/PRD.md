@@ -31,7 +31,8 @@ Build SwarmSim - a web application that allows users to upload documents, pose p
 - `POST /api/sessions/{id}/upload` - Upload document + extract knowledge graph
 - `POST /api/sessions/{id}/fetch-live` - Live Intelligence: web scraping + intel brief
 - `POST /api/sessions/{id}/refresh-intel` - Refresh live data for existing session
-- `POST /api/sessions/{id}/generate-agents` - Generate AI agent personas
+- `POST /api/sessions/{id}/generate-agents` - Kick off agent generation (background task)
+- `GET /api/sessions/{id}/agent-status` - Poll agent generation status
 - `POST /api/sessions/{id}/simulate` - Start simulation (background task)
 - `GET /api/sessions/{id}/simulation-status` - Poll simulation status
 - `GET /api/sessions/{id}/posts` - Get all simulation posts
@@ -47,7 +48,7 @@ Build SwarmSim - a web application that allows users to upload documents, pose p
 - Mode toggle: Document Upload vs Live Intelligence
 - Step 1 Upload: Drag-drop zone, prediction question input
 - Step 1 Live: Topic input, prediction horizon selector, custom question (optional)
-- Step 2: Agent count slider (10-50), agent cards grid with personality badges
+- Step 2: Agent count slider (10-50), agent cards grid with personality badges (uses polling)
 - Step 3: Round slider, dual Twitter/Reddit feeds with real-time updates
 - Step 4: Prediction report dashboard with confidence gauge, factions, risks
 - Step 5: Chat interface with agent sidebar
@@ -59,6 +60,7 @@ Build SwarmSim - a web application that allows users to upload documents, pose p
 - Auto-scrolling feeds during simulation
 - PDF report download (fpdf2)
 - Intel brief display with key developments & data points for live mode
+- Background task pattern for agent generation to avoid proxy timeouts
 
 ## Prioritized Backlog
 

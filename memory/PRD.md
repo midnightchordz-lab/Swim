@@ -1,7 +1,7 @@
 # SwarmSim - Swarm Intelligence Prediction Engine
 
 ## Original Problem Statement
-Build SwarmSim - a web application that allows users to upload documents, pose prediction questions, and utilizes AI agents to simulate social media discussions and generate structured prediction reports.
+Build SwarmSim - a web application that allows users to upload documents, pose prediction questions, and utilizes AI agents to simulate social media discussions and generate structured prediction reports. Includes Live Intelligence Mode for real-time web data fetching.
 
 ## Architecture
 - **Frontend**: React with Tailwind CSS, dark theme (bg-gray-950)
@@ -21,7 +21,7 @@ Build SwarmSim - a web application that allows users to upload documents, pose p
 4. Multi-round social media simulation (Twitter/Reddit feeds)
 5. Prediction report with confidence scores, factions, risks
 6. Interactive chat with agents and ReportAgent
-7. Live Intelligence Mode - fetch real-time web data for topics without document upload
+7. Live Intelligence Mode - fetch real-time web data (8 searches, background task, progress terminal)
 
 ## What's Been Implemented
 
@@ -29,9 +29,10 @@ Build SwarmSim - a web application that allows users to upload documents, pose p
 - `POST /api/sessions` - Create session
 - `GET /api/sessions/{id}` - Get session
 - `POST /api/sessions/{id}/upload` - Upload document + extract knowledge graph
-- `POST /api/sessions/{id}/fetch-live` - Live Intelligence: web scraping + intel brief
-- `POST /api/sessions/{id}/refresh-intel` - Refresh live data for existing session
-- `POST /api/sessions/{id}/generate-agents` - Kick off agent generation (background task)
+- `POST /api/sessions/{id}/fetch-live` - **202 background task**: 8 web searches + Claude intel brief
+- `GET /api/sessions/{id}/live-status` - Poll live fetch progress (step/total/message)
+- `POST /api/sessions/{id}/refresh-intel` - Refresh live data (background task)
+- `POST /api/sessions/{id}/generate-agents` - Background task agent generation
 - `GET /api/sessions/{id}/agent-status` - Poll agent generation status
 - `POST /api/sessions/{id}/simulate` - Start simulation (background task)
 - `GET /api/sessions/{id}/simulation-status` - Poll simulation status
@@ -44,23 +45,23 @@ Build SwarmSim - a web application that allows users to upload documents, pose p
 - `GET /api/prediction-horizons` - Get prediction horizon options
 
 ### Frontend (100% Complete)
-- 5-step wizard navigation with step indicators
+- 5-step wizard with step indicators
 - Mode toggle: Document Upload vs Live Intelligence
 - Step 1 Upload: Drag-drop zone, prediction question input
-- Step 1 Live: Topic input, prediction horizon selector, custom question (optional)
-- Step 2: Agent count slider (10-50), agent cards grid with personality badges (uses polling)
-- Step 3: Round slider, dual Twitter/Reddit feeds with real-time updates
-- Step 4: Prediction report dashboard with confidence gauge, factions, risks
+- Step 1 Live: Topic input, prediction horizon, custom question, real-time progress terminal
+- Step 2: Agent count slider (10-50), agent cards grid (polling-based)
+- Step 3: Round slider, dual Twitter/Reddit feeds
+- Step 4: Prediction report dashboard with confidence gauge
 - Step 5: Chat interface with agent sidebar
 
-### Features
-- Dark theme with tsparticles background, glowing cards, skeleton loaders
-- Interactive force-directed graph visualization (react-force-graph-2d)
-- Personality color-coding (Skeptic, Optimist, Insider, etc.)
-- Auto-scrolling feeds during simulation
+### Key Features
+- Background task pattern for all long-running operations (live fetch, agents, simulation)
+- 8-step web search covering: latest news, breaking developments, expert analysis, data/statistics, sentiment, stakeholders, risks, market implications
+- Real-time progress terminal showing search step progression
+- 800-1200 word intelligence brief synthesis
+- Interactive force-directed graph (react-force-graph-2d)
 - PDF report download (fpdf2)
-- Intel brief display with key developments & data points for live mode
-- Background task pattern for agent generation to avoid proxy timeouts
+- tsparticles background, glowing cards, skeleton loaders
 
 ## Prioritized Backlog
 

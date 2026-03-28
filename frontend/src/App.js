@@ -434,10 +434,29 @@ const UploadStep = ({ sessionId, onComplete }) => {
   }
 
   return (
-    <div className="max-w-2xl mx-auto">
-      <div className="text-center mb-6">
-        <h2 className="text-2xl font-bold text-white mb-2">Upload Your Seed Document</h2>
-        <p className="text-gray-400 text-sm">Upload a document and pose your prediction question</p>
+    <div className="max-w-3xl mx-auto">
+      {/* Hero Section */}
+      <div className="text-center mb-8 relative">
+        {/* Gradient orbs background */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute -top-20 -left-20 w-80 h-80 bg-blue-500/30 rounded-full blur-3xl animate-pulse" />
+          <div className="absolute -top-10 -right-20 w-72 h-72 bg-purple-500/30 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
+          <div className="absolute top-10 left-1/2 w-56 h-56 bg-cyan-500/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '2s' }} />
+        </div>
+        
+        <div className="relative">
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-blue-500/10 to-purple-500/10 border border-blue-500/20 rounded-full mb-4">
+            <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
+            <span className="text-xs font-medium text-blue-300">AI-Powered Prediction Engine</span>
+          </div>
+          
+          <h2 className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white via-blue-100 to-purple-200 mb-3">
+            Upload Your Seed Document
+          </h2>
+          <p className="text-gray-400 text-base max-w-lg mx-auto">
+            Feed the swarm with data. Our AI agents will analyze, debate, and predict outcomes.
+          </p>
+        </div>
       </div>
 
       {error && (
@@ -447,93 +466,137 @@ const UploadStep = ({ sessionId, onComplete }) => {
         </div>
       )}
 
-      <div
-        data-testid="upload-dropzone"
-        onClick={() => fileInputRef.current?.click()}
-        onDragEnter={handleDrag}
-        onDragLeave={handleDrag}
-        onDragOver={handleDrag}
-        onDrop={handleDrop}
-        className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-all ${
-          dragActive
-            ? "border-blue-500 bg-blue-500/10"
-            : file
-            ? "border-emerald-500 bg-emerald-500/10"
-            : "border-gray-700 hover:border-blue-500 bg-gray-900/50"
-        }`}
-      >
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".pdf,.txt,.docx,.md,.png,.jpg,.jpeg,.webp,.gif"
-          onChange={(e) => {
-            if (e.target.files?.[0]) {
-              setFile(e.target.files[0]);
-              addLog(`File selected: ${e.target.files[0].name}`, "success");
-            }
-          }}
-          className="hidden"
-        />
-        {file ? (
-          <div className="flex flex-col items-center gap-2">
-            <FileText className="w-10 h-10 text-emerald-400" />
-            <p className="text-white font-medium">{file.name}</p>
-            <p className="text-xs text-gray-400">{(file.size / 1024).toFixed(1)} KB</p>
+      {/* Upload Card */}
+      <div className="relative group">
+        <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-500 via-purple-500 to-emerald-500 rounded-2xl blur opacity-20 group-hover:opacity-40 transition duration-500" />
+        <div className="relative bg-gray-900/90 backdrop-blur-xl border border-gray-800 rounded-2xl p-8">
+          <div
+            data-testid="upload-dropzone"
+            onClick={() => fileInputRef.current?.click()}
+            onDragEnter={handleDrag}
+            onDragLeave={handleDrag}
+            onDragOver={handleDrag}
+            onDrop={handleDrop}
+            className={`relative border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-all duration-300 ${
+              dragActive
+                ? "border-blue-400 bg-blue-500/10 scale-[1.02]"
+                : file
+                ? "border-emerald-400 bg-emerald-500/10"
+                : "border-gray-600 hover:border-blue-400 bg-gray-950/50 hover:bg-blue-500/5"
+            }`}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.txt,.docx,.md,.png,.jpg,.jpeg,.webp,.gif"
+              onChange={(e) => {
+                if (e.target.files?.[0]) {
+                  setFile(e.target.files[0]);
+                  addLog(`File selected: ${e.target.files[0].name}`, "success");
+                }
+              }}
+              className="hidden"
+            />
+            {file ? (
+              <div className="flex flex-col items-center gap-3">
+                <div className="w-16 h-16 rounded-full bg-emerald-500/20 flex items-center justify-center">
+                  <FileText className="w-8 h-8 text-emerald-400" />
+                </div>
+                <div>
+                  <p className="text-white font-semibold text-lg">{file.name}</p>
+                  <p className="text-sm text-emerald-400">{(file.size / 1024).toFixed(1)} KB • Ready to process</p>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-4">
+                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center border border-blue-500/20">
+                  <Upload className="w-10 h-10 text-blue-400" />
+                </div>
+                <div>
+                  <p className="text-white font-semibold text-lg mb-1">Drop your file here or click to browse</p>
+                  <p className="text-sm text-gray-500">PDF, TXT, DOCX, MD, or Images (max 10MB)</p>
+                </div>
+                <div className="flex flex-wrap justify-center gap-2 mt-2">
+                  {['📄 PDF', '📝 TXT', '📊 DOCX', '🖼️ Images'].map((type) => (
+                    <span key={type} className="px-3 py-1 bg-gray-800/50 text-gray-400 text-xs rounded-full">
+                      {type}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
-        ) : (
-          <div className="flex flex-col items-center gap-2">
-            <Upload className="w-10 h-10 text-gray-500" />
-            <p className="text-white font-medium">Drop your file here or click to browse</p>
-            <p className="text-xs text-gray-500">Supports PDF, TXT, DOCX, MD, PNG, JPG, JPEG, WEBP (max 10MB)</p>
-          </div>
-        )}
-      </div>
 
-      <div className="mt-5">
-        <label className="block text-sm font-medium text-gray-300 mb-2">
-          Prediction Question
-        </label>
-        <textarea
-          data-testid="prediction-query-input"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="e.g., Will public support for this policy increase or decrease in the next 6 months?"
-          className="w-full h-20 px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-none"
-        />
-        
-        <div className="mt-2 flex flex-wrap gap-2">
-          {exampleQuestions.map((q, i) => (
-            <button
-              key={i}
-              onClick={() => setQuery(q)}
-              className="text-[11px] px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white rounded-full transition-colors"
-            >
-              {q}
-            </button>
-          ))}
+          {/* Prediction Question */}
+          <div className="mt-6">
+            <label className="block text-sm font-semibold text-white mb-2">
+              🎯 Prediction Question
+            </label>
+            <div className="relative">
+              <textarea
+                data-testid="prediction-query-input"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="What do you want to predict? Be specific..."
+                className="w-full h-24 px-4 py-3 bg-gray-950 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 resize-none transition-all"
+              />
+            </div>
+            
+            <div className="mt-3 flex flex-wrap gap-2">
+              <span className="text-xs text-gray-500 mr-2">Try:</span>
+              {exampleQuestions.map((q, i) => (
+                <button
+                  key={i}
+                  onClick={() => setQuery(q)}
+                  className="text-xs px-3 py-1.5 bg-gray-800 hover:bg-blue-500/20 text-gray-400 hover:text-blue-300 rounded-full transition-all duration-200 border border-transparent hover:border-blue-500/30"
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Submit Button */}
+          <button
+            data-testid="extract-graph-button"
+            onClick={handleSubmit}
+            disabled={!file || !query.trim() || loading}
+            className="w-full mt-6 py-4 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:from-gray-700 disabled:to-gray-700 disabled:cursor-not-allowed text-white font-bold rounded-xl flex items-center justify-center gap-3 transition-all duration-300 shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 disabled:shadow-none"
+          >
+            {loading ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <span>Analyzing Document...</span>
+              </>
+            ) : (
+              <>
+                <Zap className="w-5 h-5" />
+                <span>Extract Knowledge Graph</span>
+                <ArrowRight className="w-5 h-5" />
+              </>
+            )}
+          </button>
         </div>
       </div>
 
-      <button
-        data-testid="extract-graph-button"
-        onClick={handleSubmit}
-        disabled={!file || !query.trim() || loading}
-        className="w-full mt-5 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold rounded-lg flex items-center justify-center gap-2 transition-colors"
-      >
-        {loading ? (
-          <>
-            <Loader2 className="w-4 h-4 animate-spin" />
-            Extracting Knowledge Graph...
-          </>
-        ) : (
-          <>
-            <Zap className="w-4 h-4" />
-            Extract Knowledge Graph
-          </>
-        )}
-      </button>
+      {/* Features */}
+      <div className="grid grid-cols-3 gap-4 mt-8">
+        {[
+          { icon: "🧠", title: "AI Analysis", desc: "Claude extracts entities & relationships" },
+          { icon: "👥", title: "Agent Swarm", desc: "10-50 AI agents debate the topic" },
+          { icon: "📊", title: "Predictions", desc: "Confidence scores & faction analysis" }
+        ].map((feature, i) => (
+          <div key={i} className="text-center p-4 bg-gray-900/50 border border-gray-800 rounded-xl hover:border-gray-700 transition-colors">
+            <span className="text-2xl mb-2 block">{feature.icon}</span>
+            <h4 className="text-sm font-semibold text-white mb-1">{feature.title}</h4>
+            <p className="text-xs text-gray-500">{feature.desc}</p>
+          </div>
+        ))}
+      </div>
 
-      <SystemDashboard logs={logs} />
+      <div className="mt-6">
+        <SystemDashboard logs={logs} />
+      </div>
     </div>
   );
 };

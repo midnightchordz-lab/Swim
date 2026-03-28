@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import axios from "axios";
 import ForceGraph2D from "react-force-graph-2d";
+import Particles, { initParticlesEngine } from "@tsparticles/react";
+import { loadSlim } from "@tsparticles/slim";
 import {
   Upload, FileText, Users, Play, BarChart3, MessageSquare,
   CheckCircle, Loader2, ArrowRight, Send, AlertCircle,
@@ -10,6 +12,107 @@ import {
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
+
+// Skeleton Component
+const Skeleton = ({ className = "" }) => (
+  <div className={`animate-pulse bg-gray-800 rounded ${className}`} />
+);
+
+// Skeleton Card Component
+const SkeletonCard = () => (
+  <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-4">
+    <div className="flex items-center gap-4">
+      <Skeleton className="w-12 h-12 rounded-full" />
+      <div className="flex-1 space-y-2">
+        <Skeleton className="h-4 w-3/4" />
+        <Skeleton className="h-3 w-1/2" />
+      </div>
+    </div>
+    <Skeleton className="h-20 w-full" />
+    <div className="flex gap-2">
+      <Skeleton className="h-6 w-20 rounded-full" />
+      <Skeleton className="h-6 w-16 rounded-full" />
+    </div>
+  </div>
+);
+
+// Skeleton Grid Component
+const SkeletonGrid = ({ count = 4 }) => (
+  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+    {Array.from({ length: count }).map((_, i) => (
+      <div key={i} className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
+        <Skeleton className="w-10 h-10 rounded-full mx-auto" />
+        <Skeleton className="h-4 w-3/4 mx-auto" />
+        <Skeleton className="h-3 w-1/2 mx-auto" />
+      </div>
+    ))}
+  </div>
+);
+
+// Particle Background Component
+const ParticleBackground = () => {
+  const [init, setInit] = useState(false);
+
+  useEffect(() => {
+    initParticlesEngine(async (engine) => {
+      await loadSlim(engine);
+    }).then(() => {
+      setInit(true);
+    });
+  }, []);
+
+  const particlesOptions = useMemo(() => ({
+    background: {
+      color: { value: "transparent" },
+    },
+    fpsLimit: 60,
+    particles: {
+      color: { value: ["#3b82f6", "#8b5cf6", "#06b6d4", "#10b981"] },
+      links: {
+        color: "#3b82f6",
+        distance: 150,
+        enable: true,
+        opacity: 0.1,
+        width: 1,
+      },
+      move: {
+        enable: true,
+        speed: 0.5,
+        direction: "none",
+        random: true,
+        straight: false,
+        outModes: { default: "out" },
+      },
+      number: {
+        density: { enable: true, area: 1000 },
+        value: 60,
+      },
+      opacity: {
+        value: { min: 0.1, max: 0.4 },
+        animation: {
+          enable: true,
+          speed: 1,
+          minimumValue: 0.1,
+        },
+      },
+      shape: { type: "circle" },
+      size: {
+        value: { min: 1, max: 3 },
+      },
+    },
+    detectRetina: true,
+  }), []);
+
+  if (!init) return null;
+
+  return (
+    <Particles
+      id="tsparticles"
+      options={particlesOptions}
+      className="absolute inset-0 pointer-events-none"
+    />
+  );
+};
 
 // Entity type colors
 const ENTITY_COLORS = {
@@ -790,7 +893,7 @@ const AgentStep = ({ sessionId, graph, onComplete }) => {
             data-testid="generate-agents-button"
             onClick={handleGenerate}
             disabled={loading}
-            className="w-full py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold rounded-lg flex items-center justify-center gap-2 transition-colors"
+            className="w-full py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:from-gray-700 disabled:to-gray-700 disabled:cursor-not-allowed text-white font-semibold rounded-lg flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-500/20 disabled:shadow-none"
           >
             {loading ? (
               <>
@@ -804,6 +907,14 @@ const AgentStep = ({ sessionId, graph, onComplete }) => {
               </>
             )}
           </button>
+
+          {/* Loading Skeleton Preview */}
+          {loading && (
+            <div className="mt-4 space-y-3 animate-fade-in">
+              <p className="text-xs text-gray-500 text-center">Creating agent personas...</p>
+              <SkeletonGrid count={4} />
+            </div>
+          )}
         </div>
 
         <SystemDashboard logs={logs} />
@@ -1160,12 +1271,37 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
 
   if (loading) {
     return (
-      <div className="max-w-md mx-auto text-center py-12">
-        <div className="animate-pulse-glow inline-block p-6 rounded-full bg-blue-500/10 mb-4">
-          <Loader2 className="w-10 h-10 text-blue-400 animate-spin" />
+      <div className="max-w-3xl mx-auto space-y-6 animate-fade-in">
+        {/* Loading Header */}
+        <div className="text-center py-8">
+          <div className="relative inline-block">
+            <div className="w-20 h-20 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 animate-spin mx-auto" style={{ animationDuration: '3s' }}>
+              <div className="absolute inset-2 bg-gray-950 rounded-full" />
+            </div>
+            <div className="absolute inset-0 flex items-center justify-center">
+              <span className="text-2xl">🧠</span>
+            </div>
+          </div>
+          <h2 className="text-xl font-bold text-white mt-6 mb-2">ReportAgent Analyzing...</h2>
+          <p className="text-gray-400 text-sm">Processing simulation data and generating insights</p>
         </div>
-        <h2 className="text-xl font-bold text-white mb-2">ReportAgent Analyzing...</h2>
-        <p className="text-gray-400 text-sm">Processing simulation data</p>
+
+        {/* Skeleton Report Preview */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="space-y-4">
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
+          <div className="space-y-4">
+            <SkeletonCard />
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-3">
+              <Skeleton className="h-5 w-1/3" />
+              <Skeleton className="h-3 w-full" />
+              <Skeleton className="h-3 w-4/5" />
+              <Skeleton className="h-3 w-3/5" />
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -1584,10 +1720,30 @@ function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-        <div className="text-center">
-          <Loader2 className="w-10 h-10 text-blue-400 animate-spin mx-auto mb-4" />
-          <p className="text-gray-400 text-sm">Initializing SwarmSim...</p>
+      <div className="min-h-screen bg-gray-950 relative overflow-hidden">
+        <ParticleBackground />
+        <div className="relative z-10 flex items-center justify-center min-h-screen">
+          <div className="text-center">
+            <div className="relative">
+              <div className="w-20 h-20 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 animate-spin mx-auto mb-6" style={{ animationDuration: '2s' }}>
+                <div className="absolute inset-2 bg-gray-950 rounded-full" />
+              </div>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span className="text-3xl">🐟</span>
+              </div>
+            </div>
+            <h2 className="text-xl font-bold text-white mb-2">Initializing SwarmSim</h2>
+            <p className="text-gray-400 text-sm">Preparing your prediction engine...</p>
+            <div className="mt-6 flex justify-center gap-1">
+              {[0, 1, 2].map((i) => (
+                <div
+                  key={i}
+                  className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"
+                  style={{ animationDelay: `${i * 0.15}s` }}
+                />
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -1595,57 +1751,74 @@ function App() {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-        <div className="text-center text-red-400">
-          <AlertCircle className="w-10 h-10 mx-auto mb-4" />
-          <p>{error}</p>
+      <div className="min-h-screen bg-gray-950 relative overflow-hidden">
+        <ParticleBackground />
+        <div className="relative z-10 flex items-center justify-center min-h-screen">
+          <div className="text-center">
+            <div className="w-20 h-20 rounded-full bg-red-500/20 flex items-center justify-center mx-auto mb-4">
+              <AlertCircle className="w-10 h-10 text-red-400" />
+            </div>
+            <h2 className="text-xl font-bold text-white mb-2">Connection Error</h2>
+            <p className="text-gray-400 mb-4">{error}</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors"
+            >
+              Retry
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-950">
-      <Header onNewSimulation={handleNewSimulation} hasSession={!!sessionId} />
+    <div className="min-h-screen bg-gray-950 relative overflow-hidden">
+      {/* Particle Background */}
+      <ParticleBackground />
       
-      <main className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <StepIndicator
-          currentStep={currentStep}
-          completedSteps={completedSteps}
-          onStepClick={handleStepClick}
-        />
+      {/* Main Content */}
+      <div className="relative z-10">
+        <Header onNewSimulation={handleNewSimulation} hasSession={!!sessionId} />
+        
+        <main className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
+          <StepIndicator
+            currentStep={currentStep}
+            completedSteps={completedSteps}
+            onStepClick={handleStepClick}
+          />
 
-        <div className="mt-6">
-          {currentStep === 1 && (
-            <UploadStep
-              sessionId={sessionId}
-              onComplete={(data) => handleStepComplete(1, data)}
-            />
-          )}
-          
-          {currentStep === 2 && (
-            <AgentStep
-              sessionId={sessionId}
-              graph={graph}
-              onComplete={(data) => handleStepComplete(2, data)}
-            />
-          )}
-          
-          {currentStep === 3 && (
-            <SimulationView
-              sessionId={sessionId}
-              agents={agents}
-              onComplete={(data) => handleStepComplete(3, data)}
-            />
-          )}
-          
-          {currentStep === 4 && (
-            <ReportView
-              sessionId={sessionId}
-              posts={posts}
-              onComplete={(data) => handleStepComplete(4, data)}
-            />
-          )}
+          <div className="mt-6">
+            {currentStep === 1 && (
+              <UploadStep
+                sessionId={sessionId}
+                onComplete={(data) => handleStepComplete(1, data)}
+              />
+            )}
+            
+            {currentStep === 2 && (
+              <AgentStep
+                sessionId={sessionId}
+                graph={graph}
+                onComplete={(data) => handleStepComplete(2, data)}
+              />
+            )}
+            
+            {currentStep === 3 && (
+              <SimulationView
+                sessionId={sessionId}
+                agents={agents}
+                onComplete={(data) => handleStepComplete(3, data)}
+              />
+            )}
+            
+            {currentStep === 4 && (
+              <ReportView
+                sessionId={sessionId}
+                posts={posts}
+                onComplete={(data) => handleStepComplete(4, data)}
+              />
+            )}
           
           {currentStep === 5 && (
             <ChatPanel
@@ -1656,6 +1829,7 @@ function App() {
           )}
         </div>
       </main>
+      </div>
     </div>
   );
 }

@@ -755,12 +755,50 @@ async def download_report_pdf(session_id: str):
     query = session.get("prediction_query", "N/A")
     
     def safe_text(text, max_len=500):
-        """Sanitize text for PDF output"""
+        """Sanitize text for PDF output - removes Unicode characters not supported by Helvetica"""
         if not text:
             return "N/A"
-        text = str(text).replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
-        # Remove any non-printable characters
-        text = ''.join(c if c.isprintable() or c == ' ' else '' for c in text)
+        text = str(text)
+        
+        # Replace common Unicode characters with ASCII equivalents
+        replacements = {
+            '—': '-',  # em-dash
+            '–': '-',  # en-dash
+            '"': '"',  # left double quote
+            '"': '"',  # right double quote
+            ''': "'",  # left single quote
+            ''': "'",  # right single quote
+            '…': '...',  # ellipsis
+            '•': '*',  # bullet
+            '→': '->',  # arrow
+            '←': '<-',
+            '↔': '<->',
+            '≈': '~',
+            '≠': '!=',
+            '≤': '<=',
+            '≥': '>=',
+            '×': 'x',
+            '÷': '/',
+            '±': '+/-',
+            '°': ' degrees',
+            '©': '(c)',
+            '®': '(R)',
+            '™': '(TM)',
+            '\u00a0': ' ',  # non-breaking space
+        }
+        for unicode_char, ascii_char in replacements.items():
+            text = text.replace(unicode_char, ascii_char)
+        
+        # Remove newlines and tabs
+        text = text.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+        
+        # Keep only ASCII printable characters
+        text = ''.join(c if (ord(c) < 128 and c.isprintable()) or c == ' ' else '' for c in text)
+        
+        # Clean up multiple spaces
+        while '  ' in text:
+            text = text.replace('  ', ' ')
+        
         if len(text) > max_len:
             text = text[:max_len] + "..."
         return text.strip() or "N/A"

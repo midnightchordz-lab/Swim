@@ -14,6 +14,9 @@ import re
 import random
 import asyncio
 
+import base64
+import httpx
+
 # Load environment variables first
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -71,12 +74,50 @@ def clean_json_response(text: str) -> str:
     return text.strip()
 
 
-async def call_claude(system_prompt: str, user_prompt: str, max_tokens: int = 3000) -> str:
-    """Call Claude API using emergentintegrations"""
+async def call_claude(system_prompt: str, user_prompt: str, max_tokens: int = 3000, image_data: dict = None) -> str:
+    """Call Claude API using emergentintegrations or litellm for images"""
     api_key = os.environ.get('EMERGENT_LLM_KEY')
     if not api_key:
         raise HTTPException(status_code=500, detail="EMERGENT_LLM_KEY not configured")
     
+    # If image data is provided, use litellm directly with Emergent proxy
+    if image_data:
+        import litellm
+        from emergentintegrations.llm.chat import get_integration_proxy_url
+        
+        proxy_url = get_integration_proxy_url()
+        
+        # Build the message with image
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{image_data['media_type']};base64,{image_data['base64']}"
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": user_prompt
+                    }
+                ]
+            }
+        ]
+        
+        response = litellm.completion(
+            model="claude-sonnet-4-20250514",
+            messages=messages,
+            api_key=api_key,
+            api_base=proxy_url + "/llm",
+            custom_llm_provider="openai",
+            max_tokens=max_tokens
+        )
+        return response.choices[0].message.content
+    
+    # For text-only, use emergentintegrations
     chat = LlmChat(
         api_key=api_key,
         session_id=str(uuid.uuid4()),
@@ -89,13 +130,33 @@ async def call_claude(system_prompt: str, user_prompt: str, max_tokens: int = 30
     return response
 
 
-async def parse_document(file: UploadFile) -> str:
-    """Parse uploaded document to plain text"""
+async def parse_document(file: UploadFile) -> tuple[str, dict]:
+    """Parse uploaded document to plain text. Returns (text, image_data) where image_data is None for non-image files."""
     content = await file.read()
     filename = file.filename.lower()
     
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(status_code=400, detail="File exceeds 10MB limit")
+    
+    # Check if it's an image file
+    image_extensions = ('.png', '.jpg', '.jpeg', '.webp', '.gif')
+    if any(filename.endswith(ext) for ext in image_extensions):
+        # Return image data for Claude vision
+        media_type = file.content_type or "image/png"
+        if filename.endswith('.jpg') or filename.endswith('.jpeg'):
+            media_type = "image/jpeg"
+        elif filename.endswith('.png'):
+            media_type = "image/png"
+        elif filename.endswith('.webp'):
+            media_type = "image/webp"
+        elif filename.endswith('.gif'):
+            media_type = "image/gif"
+        
+        image_data = {
+            "media_type": media_type,
+            "base64": base64.b64encode(content).decode('utf-8')
+        }
+        return "", image_data
     
     try:
         if filename.endswith('.pdf'):
@@ -107,16 +168,16 @@ async def parse_document(file: UploadFile) -> str:
                     text = page.extract_text()
                     if text:
                         text_parts.append(text)
-            return '\n'.join(text_parts)
+            return '\n'.join(text_parts), None
         
         elif filename.endswith('.docx'):
             from docx import Document
             import io
             doc = Document(io.BytesIO(content))
-            return '\n'.join([para.text for para in doc.paragraphs])
+            return '\n'.join([para.text for para in doc.paragraphs]), None
         
         else:  # .txt, .md, or fallback
-            return content.decode('utf-8', errors='ignore')
+            return content.decode('utf-8', errors='ignore'), None
     
     except Exception as e:
         logger.error(f"Error parsing document: {e}")
@@ -167,14 +228,44 @@ async def upload_document(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     
-    # Parse document
-    text = await parse_document(file)
-    text = text[:TEXT_TRUNCATE_LIMIT]
+    # Parse document (returns text and optional image_data)
+    text, image_data = await parse_document(file)
     
     # Extract knowledge graph using Claude
-    system_prompt = """You are a knowledge-graph extraction expert. Given seed text and a prediction question, extract entities and relationships. Respond ONLY with valid JSON, no markdown fences."""
+    system_prompt = """You are a knowledge-graph extraction expert. Given seed text (or an image) and a prediction question, extract entities and relationships. Respond ONLY with valid JSON, no markdown fences."""
     
-    user_prompt = f"""Seed Text: \"\"\"{text}\"\"\"
+    if image_data:
+        # Image-based extraction
+        user_prompt = f"""Analyze this image carefully and extract a knowledge graph based on the content you see.
+Prediction Question: {prediction_query}
+
+Return JSON:
+{{
+  "summary": "2-3 sentence description of what the image shows and the situation",
+  "themes": ["theme1", "theme2", "theme3"],
+  "entities": [
+    {{
+      "id": "e1",
+      "name": "Entity Name",
+      "type": "person|organization|faction|concept|event",
+      "description": "Brief description",
+      "stance": "positive|negative|neutral|conflicted"
+    }}
+  ],
+  "relationships": [
+    {{
+      "source": "e1",
+      "target": "e2",
+      "label": "relationship description",
+      "weight": 0.8
+    }}
+  ]
+}}
+Extract 8-20 entities and 10-25 relationships relevant to the prediction question based on what you see in the image."""
+    else:
+        # Text-based extraction
+        text = text[:TEXT_TRUNCATE_LIMIT]
+        user_prompt = f"""Seed Text: \"\"\"{text}\"\"\"
 Prediction Question: {prediction_query}
 
 Return JSON:
@@ -202,7 +293,7 @@ Return JSON:
 Extract 8-20 entities and 10-25 relationships relevant to the prediction question."""
 
     try:
-        response = await call_claude(system_prompt, user_prompt, max_tokens=3000)
+        response = await call_claude(system_prompt, user_prompt, max_tokens=3000, image_data=image_data)
         cleaned = clean_json_response(response)
         graph = json.loads(cleaned)
     except json.JSONDecodeError as e:

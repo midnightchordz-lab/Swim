@@ -252,7 +252,7 @@ const UploadStep = ({ sessionId, onComplete }) => {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".pdf,.txt,.docx,.md"
+          accept=".pdf,.txt,.docx,.md,.png,.jpg,.jpeg,.webp,.gif"
           onChange={(e) => e.target.files?.[0] && setFile(e.target.files[0])}
           className="hidden"
         />
@@ -266,7 +266,7 @@ const UploadStep = ({ sessionId, onComplete }) => {
           <div className="flex flex-col items-center gap-3">
             <Upload className="w-12 h-12 text-gray-500" />
             <p className="text-white font-medium">Drop your file here or click to browse</p>
-            <p className="text-sm text-gray-500">Supports PDF, TXT, DOCX, MD (max 10MB)</p>
+            <p className="text-sm text-gray-500">Supports PDF, TXT, DOCX, MD, PNG, JPG, JPEG, WEBP (max 10MB)</p>
           </div>
         )}
       </div>

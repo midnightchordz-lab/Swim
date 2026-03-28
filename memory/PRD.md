@@ -15,7 +15,7 @@ Build SwarmSim - a web application that allows users to upload documents, pose p
 3. **Decision Maker**: Needs prediction insights for strategic planning
 
 ## Core Requirements (Static)
-1. Document upload (PDF, TXT, DOCX, MD) with 10MB limit
+1. Document upload (PDF, TXT, DOCX, MD, PNG, JPG, JPEG, WEBP, GIF) with 10MB limit
 2. Knowledge graph extraction from documents
 3. AI agent persona generation (10-50 agents)
 4. Multi-round social media simulation (Twitter/Reddit feeds)

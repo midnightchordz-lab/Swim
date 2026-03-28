@@ -1,4 +1,5 @@
 from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -13,6 +14,7 @@ import json
 import re
 import random
 import asyncio
+import io
 
 import base64
 import httpx
@@ -736,6 +738,226 @@ async def get_report(session_id: str):
         raise HTTPException(status_code=404, detail="Report not generated yet")
     
     return json.loads(session["report_json"])
+
+
+@api_router.get("/sessions/{session_id}/report/pdf")
+async def download_report_pdf(session_id: str):
+    """Download prediction report as PDF"""
+    from fpdf import FPDF
+    
+    session = await db.sessions.find_one({"id": session_id}, {"_id": 0})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if not session.get("report_json"):
+        raise HTTPException(status_code=404, detail="Report not generated yet")
+    
+    report = json.loads(session["report_json"])
+    query = session.get("prediction_query", "N/A")
+    
+    def safe_text(text, max_len=500):
+        """Sanitize text for PDF output"""
+        if not text:
+            return "N/A"
+        text = str(text).replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+        # Remove any non-printable characters
+        text = ''.join(c if c.isprintable() or c == ' ' else '' for c in text)
+        if len(text) > max_len:
+            text = text[:max_len] + "..."
+        return text.strip() or "N/A"
+    
+    # Create PDF
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    
+    # Title
+    pdf.set_font("Helvetica", "B", 24)
+    pdf.set_text_color(30, 64, 175)  # Blue
+    pdf.cell(0, 15, "SwarmSim Prediction Report", ln=True, align="C")
+    pdf.ln(5)
+    
+    # Prediction Question
+    pdf.set_font("Helvetica", "I", 11)
+    pdf.set_text_color(100, 100, 100)
+    pdf.multi_cell(190, 6, f"Question: {safe_text(query, 300)}")
+    pdf.ln(5)
+    
+    # Generated Date
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(0, 5, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}", ln=True)
+    pdf.ln(10)
+    
+    # Prediction Outcome Box
+    pdf.set_fill_color(240, 249, 255)  # Light blue background
+    pdf.set_draw_color(59, 130, 246)  # Blue border
+    pdf.rect(10, pdf.get_y(), 190, 35, style="DF")
+    
+    pdf.set_xy(15, pdf.get_y() + 5)
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(30, 64, 175)
+    pdf.cell(0, 8, "PREDICTED OUTCOME", ln=True)
+    
+    pdf.set_x(15)
+    pdf.set_font("Helvetica", "", 11)
+    pdf.set_text_color(0, 0, 0)
+    outcome = safe_text(report.get("prediction", {}).get("outcome", "N/A"), 300)
+    pdf.multi_cell(180, 6, outcome)
+    
+    pdf.ln(15)
+    
+    # Confidence Score
+    prediction = report.get("prediction", {})
+    confidence = prediction.get("confidence", "N/A")
+    score = prediction.get("confidence_score", 0) or 0
+    timeframe = safe_text(prediction.get("timeframe", "N/A"), 50)
+    
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(60, 8, f"Confidence: {confidence} ({int(score * 100)}%)")
+    pdf.cell(60, 8, f"Timeframe: {timeframe}", ln=True)
+    pdf.ln(8)
+    
+    # Executive Summary
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(30, 64, 175)
+    pdf.cell(0, 10, "Executive Summary", ln=True)
+    pdf.set_font("Helvetica", "", 11)
+    pdf.set_text_color(0, 0, 0)
+    summary = safe_text(report.get("executive_summary", "N/A"), 800)
+    pdf.multi_cell(190, 6, summary)
+    pdf.ln(8)
+    
+    # Opinion Landscape
+    opinion = report.get("opinion_landscape", {})
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(30, 64, 175)
+    pdf.cell(0, 10, "Opinion Landscape", ln=True)
+    
+    pdf.set_font("Helvetica", "", 11)
+    pdf.set_text_color(0, 0, 0)
+    support = opinion.get("support_percentage", 0) or 0
+    opposition = opinion.get("opposition_percentage", 0) or 0
+    undecided = opinion.get("undecided_percentage", 0) or 0
+    sentiment = safe_text(opinion.get("dominant_sentiment", "N/A"), 50)
+    
+    pdf.cell(0, 6, f"Dominant Sentiment: {sentiment.title()}", ln=True)
+    pdf.cell(60, 6, f"Support: {support}%")
+    pdf.cell(60, 6, f"Opposition: {opposition}%")
+    pdf.cell(60, 6, f"Undecided: {undecided}%", ln=True)
+    pdf.ln(5)
+    
+    # Key Factions
+    factions = opinion.get("key_factions", [])
+    if factions:
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, "Key Factions:", ln=True)
+        pdf.set_font("Helvetica", "", 10)
+        for faction in factions:
+            name = safe_text(faction.get('name', 'N/A'), 50)
+            size = safe_text(faction.get('size', 'N/A'), 20)
+            stance = safe_text(faction.get('stance', 'N/A'), 200)
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.cell(0, 6, f"- {name} ({size})", ln=True)
+            pdf.set_font("Helvetica", "", 10)
+            pdf.multi_cell(190, 5, f"  {stance}")
+    pdf.ln(5)
+    
+    # Risk Factors
+    risks = report.get("risk_factors", [])
+    if risks:
+        pdf.set_font("Helvetica", "B", 14)
+        pdf.set_text_color(220, 38, 38)  # Red
+        pdf.cell(0, 10, "Risk Factors", ln=True)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.set_text_color(0, 0, 0)
+        for risk in risks:
+            likelihood = safe_text(risk.get("likelihood", "N/A"), 20)
+            factor = safe_text(risk.get("factor", "N/A"), 100)
+            impact = safe_text(risk.get("impact", "N/A"), 200)
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.cell(0, 6, f"[{likelihood}] {factor}", ln=True)
+            pdf.set_font("Helvetica", "", 10)
+            pdf.multi_cell(190, 5, f"  Impact: {impact}")
+        pdf.ln(5)
+    
+    # Key Turning Points
+    turning_points = report.get("key_turning_points", [])
+    if turning_points:
+        pdf.set_font("Helvetica", "B", 14)
+        pdf.set_text_color(30, 64, 175)
+        pdf.cell(0, 10, "Key Turning Points", ln=True)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.set_text_color(0, 0, 0)
+        for point in turning_points:
+            round_num = point.get('round', 'N/A')
+            description = safe_text(point.get('description', 'N/A'), 150)
+            impact = safe_text(point.get('impact', 'N/A'), 200)
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.cell(0, 6, f"Round {round_num}: {description}", ln=True)
+            pdf.set_font("Helvetica", "", 10)
+            pdf.multi_cell(190, 5, f"  Impact: {impact}")
+        pdf.ln(5)
+    
+    # Alternative Scenarios
+    scenarios = report.get("alternative_scenarios", [])
+    if scenarios:
+        pdf.set_font("Helvetica", "B", 14)
+        pdf.set_text_color(30, 64, 175)
+        pdf.cell(0, 10, "Alternative Scenarios", ln=True)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.set_text_color(0, 0, 0)
+        for scenario in scenarios:
+            prob = scenario.get("probability", 0) or 0
+            scenario_name = safe_text(scenario.get('scenario', 'N/A'), 100)
+            conditions = safe_text(scenario.get('conditions', 'N/A'), 200)
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.cell(0, 6, f"{scenario_name} ({int(prob * 100)}% probability)", ln=True)
+            pdf.set_font("Helvetica", "", 10)
+            pdf.multi_cell(190, 5, f"  Conditions: {conditions}")
+        pdf.ln(5)
+    
+    # Agent Highlights
+    highlights = report.get("agent_highlights", [])
+    if highlights:
+        pdf.set_font("Helvetica", "B", 14)
+        pdf.set_text_color(30, 64, 175)
+        pdf.cell(0, 10, "Agent Highlights", ln=True)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.set_text_color(0, 0, 0)
+        for highlight in highlights:
+            pdf.set_font("Helvetica", "B", 10)
+            name = safe_text(highlight.get('agent_name', 'N/A'), 50)
+            pdf.cell(0, 6, f"- {name}", ln=True)
+            pdf.set_font("Helvetica", "", 10)
+            role = safe_text(highlight.get('role_in_simulation', 'N/A'), 200)
+            pdf.multi_cell(190, 5, f"Role: {role}")
+            quote = safe_text(highlight.get("notable_quote", ""), 150)
+            if quote and quote != "N/A":
+                pdf.set_font("Helvetica", "I", 10)
+                pdf.multi_cell(190, 5, f'"{quote}"')
+                pdf.set_font("Helvetica", "", 10)
+            pdf.ln(2)
+    
+    # Footer
+    pdf.ln(10)
+    pdf.set_font("Helvetica", "I", 8)
+    pdf.set_text_color(150, 150, 150)
+    pdf.cell(0, 5, "Generated by SwarmSim - Swarm Intelligence Prediction Engine", ln=True, align="C")
+    
+    # Output PDF to bytes
+    pdf_output = io.BytesIO()
+    pdf_bytes = pdf.output()
+    pdf_output.write(pdf_bytes)
+    pdf_output.seek(0)
+    
+    # Create filename
+    filename = f"swarmsim_report_{session_id[:8]}_{datetime.now().strftime('%Y%m%d')}.pdf"
+    
+    return StreamingResponse(
+        pdf_output,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 
 @api_router.post("/sessions/{session_id}/chat")

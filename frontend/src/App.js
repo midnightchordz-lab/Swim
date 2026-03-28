@@ -3,7 +3,8 @@ import axios from "axios";
 import {
   Upload, FileText, Users, Play, BarChart3, MessageSquare,
   CheckCircle, Loader2, ArrowRight, Send, AlertCircle,
-  Twitter, ChevronRight, Zap, Target, TrendingUp, AlertTriangle
+  Twitter, ChevronRight, Zap, Target, TrendingUp, AlertTriangle,
+  Download
 } from "lucide-react";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -927,14 +928,28 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
         </div>
       )}
 
-      <button
-        data-testid="interact-with-agents-button"
-        onClick={() => onComplete(report)}
-        className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg flex items-center justify-center gap-2 transition-colors"
-      >
-        💬 Interact with Agents →
-        <ChevronRight className="w-5 h-5" />
-      </button>
+      {/* Action Buttons */}
+      <div className="flex flex-col sm:flex-row gap-4">
+        <button
+          data-testid="download-pdf-button"
+          onClick={() => {
+            window.open(`${API}/sessions/${sessionId}/report/pdf`, '_blank');
+          }}
+          className="flex-1 py-3 bg-gray-800 hover:bg-gray-700 text-white font-semibold rounded-lg flex items-center justify-center gap-2 transition-colors border border-gray-700"
+        >
+          <Download className="w-5 h-5" />
+          Download PDF Report
+        </button>
+        
+        <button
+          data-testid="interact-with-agents-button"
+          onClick={() => onComplete(report)}
+          className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg flex items-center justify-center gap-2 transition-colors"
+        >
+          💬 Interact with Agents →
+          <ChevronRight className="w-5 h-5" />
+        </button>
+      </div>
     </div>
   );
 };

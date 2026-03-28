@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="12" time="331.552" timestamp="2026-03-28T08:40:21.336722+00:00" hostname="agent-env-4b7cce5f-30b0-42d8-bb34-55876faf753a"><testcase classname="backend.tests.test_live_intel_v2.TestHealthAndSession" name="test_health_endpoint" time="5.040" /><testcase classname="backend.tests.test_live_intel_v2.TestHealthAndSession" name="test_create_session" time="30.090"><failure message="requests.exceptions.ReadTimeout: HTTPSConnectionPool(host='swarm-intel.preview.emergentagent.com', port=443): Read timed out. (read timeout=30)">/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:534: in _make_request
+    response = conn.getresponse()
+               ^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/urllib3/connection.py:571: in getresponse
+    httplib_response = super().getresponse()
+                       ^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/http/client.py:1415: in getresponse
+    response.begin()
+/usr/local/lib/python3.11/http/client.py:330: in begin
+    version, status, reason = self._read_status()
+                              ^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/http/client.py:291: in _read_status
+    line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/socket.py:718: in readinto
+    return self._sock.recv_into(b)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/ssl.py:1314: in recv_into
+    return self.read(nbytes, buffer)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/ssl.py:1166: in read
+    return self._sslobj.read(len, buffer)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TimeoutError: The read operation timed out
+
+The above exception was the direct cause of the following exception:
+/root/.venv/lib/python3.11/site-packages/requests/adapters.py:644: in send
+    resp = conn.urlopen(
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:841: in urlopen
+    retries = retries.increment(
+/root/.venv/lib/python3.11/site-packages/urllib3/util/retry.py:490: in increment
+    raise reraise(type(error), error, _stacktrace)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/urllib3/util/util.py:39: in reraise
+    raise value
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:787: in urlopen
+    response = self._make_request(
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:536: in _make_request
+    self._raise_timeout(err=e, url=url, timeout_value=read_timeout)
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:367: in _raise_timeout
+    raise ReadTimeoutError(
+E   urllib3.exceptions.ReadTimeoutError: HTTPSConnectionPool(host='swarm-intel.preview.emergentagent.com', port=443): Read timed out. (read timeout=30)
+
+During handling of the above exception, another exception occurred:
+backend/tests/test_live_intel_v2.py:28: in test_create_session
+    response = requests.post(f"{BASE_URL}/api/sessions", timeout=DEFAULT_TIMEOUT)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/api.py:115: in post
+    return request("post", url, data=data, json=json, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/api.py:59: in request
+    return session.request(method=method, url=url, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/sessions.py:589: in request
+    resp = self.send(prep, **send_kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/sessions.py:703: in send
+    r = adapter.send(request, **kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/adapters.py:690: in send
+    raise ReadTimeout(e, request=request)
+E   requests.exceptions.ReadTimeout: HTTPSConnectionPool(host='swarm-intel.preview.emergentagent.com', port=443): Read timed out. (read timeout=30)</failure></testcase><testcase classname="backend.tests.test_live_intel_v2.TestHealthAndSession" name="test_get_prediction_horizons" time="21.174" /><testcase classname="backend.tests.test_live_intel_v2.TestFetchLiveBackgroundTask" name="test_fetch_live_returns_202" time="0.255" /><testcase classname="backend.tests.test_live_intel_v2.TestFetchLiveBackgroundTask" name="test_fetch_live_empty_topic_returns_400" time="0.208" /><testcase classname="backend.tests.test_live_intel_v2.TestFetchLiveBackgroundTask" name="test_fetch_live_invalid_session_returns_404" time="0.111" /><testcase classname="backend.tests.test_live_intel_v2.TestLiveStatusPolling" name="test_live_status_returns_progress_fields" time="0.308" /><testcase classname="backend.tests.test_live_intel_v2.TestLiveStatusPolling" name="test_live_status_invalid_session_returns_404" time="0.096" /><testcase classname="backend.tests.test_live_intel_v2.TestFullLiveFetchFlow" name="test_live_fetch_completes_with_graph_and_intel_brief" time="146.804" /><testcase classname="backend.tests.test_live_intel_v2.TestAgentGenerationBackgroundTask" name="test_agent_generation_returns_generating_status" time="126.882"><failure message="assert 400 == 200&#10; +  where 400 = &lt;Response [400]&gt;.status_code">backend/tests/test_live_intel_v2.py:291: in test_agent_generation_returns_generating_status
+    assert response.status_code == 200
+E   assert 400 == 200
+E    +  where 400 = &lt;Response [400]&gt;.status_code</failure></testcase><testcase classname="backend.tests.test_live_intel_v2.TestDocumentUploadRegression" name="test_upload_endpoint_exists" time="0.198" /><testcase classname="backend.tests.test_live_intel_v2.TestDocumentUploadRegression" name="test_session_default_mode_is_upload" time="0.182" /></testsuite></testsuites>

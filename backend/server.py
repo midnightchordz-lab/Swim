@@ -1,5 +1,5 @@
 from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -113,24 +113,46 @@ def clean_json_response(text: str) -> str:
     return text.strip()
 
 
-async def fetch_web_data(topic: str, horizon: str) -> dict:
-    """Fetch live web data for a topic using DuckDuckGo search"""
+async def fetch_web_data(topic: str, horizon: str, session_id: str = None) -> dict:
+    """Fetch live web data for a topic using DuckDuckGo search (5-8 queries covering multiple angles)"""
     import urllib.parse
     
+    # 5-8 searches covering: latest news, expert analysis, data/statistics, sentiment signals
     search_queries = [
-        f"{topic} latest news today",
-        f"{topic} analysis expert opinion",
-        f"{topic} statistics data 2025",
-        f"{topic} public reaction sentiment",
-        f"{topic} key stakeholders positions"
+        f"{topic} latest news today {horizon}",
+        f"{topic} breaking news last 48 hours",
+        f"{topic} expert analysis opinion forecast",
+        f"{topic} statistics data numbers 2025 2026",
+        f"{topic} public sentiment reaction social media",
+        f"{topic} key stakeholders positions decisions",
+        f"{topic} risks challenges outlook",
+        f"{topic} market impact economic implications",
+    ]
+    
+    progress_steps = [
+        "Searching latest news...",
+        "Searching breaking developments...",
+        "Pulling expert analysis...",
+        "Pulling data & statistics...",
+        "Scanning sentiment signals...",
+        "Identifying key stakeholders...",
+        "Assessing risks & challenges...",
+        "Gathering market implications...",
     ]
     
     all_results = []
     
     async with httpx.AsyncClient(timeout=30.0) as client:
-        for query in search_queries[:3]:  # Limit to 3 searches
+        for idx, query in enumerate(search_queries):
+            # Update progress in DB if session_id provided
+            if session_id:
+                step_msg = progress_steps[idx] if idx < len(progress_steps) else f"Search {idx+1}..."
+                await db.sessions.update_one(
+                    {"id": session_id},
+                    {"$set": {"live_progress": step_msg, "live_progress_step": idx + 1, "live_progress_total": len(search_queries)}}
+                )
+            
             try:
-                # Use DuckDuckGo HTML search
                 encoded_query = urllib.parse.quote(query)
                 url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
                 
@@ -139,14 +161,11 @@ async def fetch_web_data(topic: str, horizon: str) -> dict:
                 })
                 
                 if response.status_code == 200:
-                    # Extract text snippets from results
                     html = response.text
-                    # Simple extraction of result snippets
-                    import re
                     snippets = re.findall(r'class="result__snippet"[^>]*>([^<]+)', html)
                     titles = re.findall(r'class="result__a"[^>]*>([^<]+)', html)
                     
-                    for i, (title, snippet) in enumerate(zip(titles[:5], snippets[:5])):
+                    for title, snippet in zip(titles[:4], snippets[:4]):
                         all_results.append({
                             "query": query,
                             "title": title.strip(),
@@ -157,7 +176,7 @@ async def fetch_web_data(topic: str, horizon: str) -> dict:
                 logger.warning(f"Search failed for query '{query}': {e}")
                 continue
             
-            await asyncio.sleep(0.5)  # Rate limiting
+            await asyncio.sleep(0.4)  # Rate limiting
     
     return {
         "results": all_results,
@@ -430,53 +449,59 @@ Extract 8-20 entities and 10-25 relationships relevant to the prediction questio
     return {"status": "graph_ready", "graph": graph}
 
 
-@api_router.post("/sessions/{session_id}/fetch-live")
-async def fetch_live_data(session_id: str, request: FetchLiveRequest):
-    """Fetch live web data and generate intelligence brief for Live Intelligence mode"""
-    session = await db.sessions.find_one({"id": session_id})
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    
-    topic = request.topic.strip()
-    if not topic:
-        raise HTTPException(status_code=400, detail="Topic cannot be empty")
-    horizon = request.horizon
-    prediction_query = request.prediction_query or f"What will happen with {topic} in the {horizon.lower()}?"
-    
-    # Fetch live web data
-    logger.info(f"Fetching live data for topic: {topic}")
-    web_data = await fetch_web_data(topic, horizon)
-    
-    if not web_data.get("results"):
-        raise HTTPException(status_code=400, detail="Could not fetch live data. Please try a different topic.")
-    
-    # Build context from web results
-    context_parts = []
-    for result in web_data["results"][:10]:
-        context_parts.append(f"• {result['title']}: {result['snippet']}")
-    web_context = "\n".join(context_parts)
-    
-    # Generate intelligence brief using Claude
-    system_prompt = """You are an intelligence analyst creating a brief on a current topic. Based on the web data provided, create a structured intelligence brief. Respond ONLY with valid JSON, no markdown fences."""
-    
-    user_prompt = f"""Topic: {topic}
+async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_query: str):
+    """Background task to fetch live web data and generate intelligence brief"""
+    try:
+        # Update progress
+        await db.sessions.update_one(
+            {"id": session_id},
+            {"$set": {"live_progress": "Initializing web search...", "live_progress_step": 0, "live_progress_total": 8}}
+        )
+        
+        # Fetch live web data (5-8 searches)
+        logger.info(f"Fetching live data for topic: {topic}")
+        web_data = await fetch_web_data(topic, horizon, session_id=session_id)
+        
+        if not web_data.get("results"):
+            await db.sessions.update_one(
+                {"id": session_id},
+                {"$set": {"live_fetch_status": "failed", "live_fetch_error": "Could not fetch live data. Please try a different topic."}}
+            )
+            return
+        
+        # Update progress - building graph
+        await db.sessions.update_one(
+            {"id": session_id},
+            {"$set": {"live_progress": "Building knowledge graph..."}}
+        )
+        
+        # Build context from web results
+        context_parts = []
+        for result in web_data["results"][:20]:
+            context_parts.append(f"- {result['title']}: {result['snippet']}")
+        web_context = "\n".join(context_parts)
+        
+        # Generate intelligence brief using Claude
+        system_prompt = """You are an intelligence analyst creating a brief on a current topic. Based on the web data provided, create a structured intelligence brief of 800-1200 words. Respond ONLY with valid JSON, no markdown fences."""
+        
+        user_prompt = f"""Topic: {topic}
 Prediction Horizon: {horizon}
 Prediction Question: {prediction_query}
 
-Live Web Data:
+Live Web Data ({len(web_data['results'])} sources):
 {web_context}
 
-Generate a comprehensive intelligence brief. Return JSON:
+Generate a comprehensive intelligence brief (800-1200 words in the summary). Return JSON:
 {{
-  "summary": "3-4 sentence executive summary of the current situation",
-  "key_developments": ["recent development 1", "recent development 2", "recent development 3"],
+  "summary": "Detailed 800-1200 word executive summary synthesizing all findings, covering current state, key developments, stakeholder positions, data trends, and outlook",
+  "key_developments": ["recent development 1", "recent development 2", "recent development 3", "recent development 4", "recent development 5"],
   "stakeholders": [
     {{"name": "Stakeholder Name", "position": "Their current stance or action", "influence": "high|medium|low"}}
   ],
   "data_points": [
     {{"metric": "Key metric or stat", "value": "Current value", "trend": "up|down|stable"}}
   ],
-  "themes": ["theme1", "theme2", "theme3"],
+  "themes": ["theme1", "theme2", "theme3", "theme4", "theme5"],
   "entities": [
     {{
       "id": "e1",
@@ -494,50 +519,117 @@ Generate a comprehensive intelligence brief. Return JSON:
 }}
 Extract 10-20 entities and 15-30 relationships based on the live data."""
 
-    try:
+        await db.sessions.update_one(
+            {"id": session_id},
+            {"$set": {"live_progress": "Generating intelligence brief..."}}
+        )
+        
         response = await call_claude(system_prompt, user_prompt, max_tokens=4000)
         cleaned = clean_json_response(response)
         intel_brief = json.loads(cleaned)
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON parsing error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to parse intelligence brief from AI response")
+        
+        # Create graph structure from intel brief
+        graph = {
+            "summary": intel_brief.get("summary", ""),
+            "themes": intel_brief.get("themes", []),
+            "entities": intel_brief.get("entities", []),
+            "relationships": intel_brief.get("relationships", [])
+        }
+        
+        # Update session with live data
+        await db.sessions.update_one(
+            {"id": session_id},
+            {
+                "$set": {
+                    "status": "graph_ready",
+                    "data_mode": "live",
+                    "topic": topic,
+                    "prediction_query": prediction_query,
+                    "graph_json": json.dumps(graph),
+                    "intel_brief": json.dumps(intel_brief),
+                    "fetched_at": web_data["fetched_at"],
+                    "live_fetch_status": "completed",
+                    "live_progress": "Complete!",
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }
+            }
+        )
+        logger.info(f"Live fetch completed for session {session_id}: {len(graph['entities'])} entities, {len(web_data['results'])} sources")
+        
     except Exception as e:
-        logger.error(f"Claude API error: {e}")
-        raise HTTPException(status_code=500, detail=f"AI processing error: {str(e)}")
+        logger.error(f"Live fetch failed for session {session_id}: {e}")
+        await db.sessions.update_one(
+            {"id": session_id},
+            {
+                "$set": {
+                    "live_fetch_status": "failed",
+                    "live_fetch_error": str(e)[:200],
+                    "live_progress": "Failed",
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }
+            }
+        )
+
+
+@api_router.post("/sessions/{session_id}/fetch-live")
+async def fetch_live_data(session_id: str, request: FetchLiveRequest):
+    """Kick off live web data fetching as a background task (returns 202 immediately)"""
+    session = await db.sessions.find_one({"id": session_id})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
     
-    # Create graph structure from intel brief
-    graph = {
-        "summary": intel_brief.get("summary", ""),
-        "themes": intel_brief.get("themes", []),
-        "entities": intel_brief.get("entities", []),
-        "relationships": intel_brief.get("relationships", [])
-    }
+    topic = request.topic.strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="Topic cannot be empty")
+    horizon = request.horizon
+    prediction_query = request.prediction_query or f"What will happen with {topic} in the {horizon.lower()}?"
     
-    # Update session with live data
+    # Mark as fetching
     await db.sessions.update_one(
         {"id": session_id},
-        {
-            "$set": {
-                "status": "graph_ready",
-                "data_mode": "live",
-                "topic": topic,
-                "prediction_query": prediction_query,
-                "graph_json": json.dumps(graph),
-                "intel_brief": json.dumps(intel_brief),
-                "fetched_at": web_data["fetched_at"],
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            }
-        }
+        {"$set": {
+            "live_fetch_status": "fetching",
+            "live_fetch_error": None,
+            "live_progress": "Starting...",
+            "live_progress_step": 0,
+            "live_progress_total": 8,
+            "topic": topic,
+            "data_mode": "live",
+        }}
     )
     
-    return {
-        "status": "graph_ready",
-        "topic": topic,
-        "graph": graph,
-        "intel_brief": intel_brief,
-        "fetched_at": web_data["fetched_at"],
-        "sources_count": len(web_data["results"])
+    asyncio.create_task(run_live_fetch(session_id, topic, horizon, prediction_query))
+    return JSONResponse(status_code=202, content={"status": "fetching", "message": "Live intelligence fetch started"})
+
+
+@api_router.get("/sessions/{session_id}/live-status")
+async def get_live_status(session_id: str):
+    """Poll live intelligence fetch status and progress"""
+    session = await db.sessions.find_one({"id": session_id}, {"_id": 0})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    status = session.get("live_fetch_status", "idle")
+    result = {
+        "status": status,
+        "progress": session.get("live_progress", ""),
+        "progress_step": session.get("live_progress_step", 0),
+        "progress_total": session.get("live_progress_total", 8),
     }
+    
+    if status == "completed":
+        graph = json.loads(session["graph_json"]) if session.get("graph_json") else None
+        intel_brief = json.loads(session["intel_brief"]) if session.get("intel_brief") else None
+        result.update({
+            "graph": graph,
+            "intel_brief": intel_brief,
+            "sources_count": len(intel_brief.get("entities", [])) if intel_brief else 0,
+            "fetched_at": session.get("fetched_at"),
+        })
+    elif status == "failed":
+        result["error"] = session.get("live_fetch_error", "Unknown error")
+    
+    return result
 
 
 @api_router.post("/sessions/{session_id}/refresh-intel")
@@ -553,9 +645,16 @@ async def refresh_intel(session_id: str):
     if not topic:
         raise HTTPException(status_code=400, detail="No topic found in session")
     
-    # Re-fetch with same topic
-    request = FetchLiveRequest(topic=topic, prediction_query=session.get("prediction_query", ""))
-    return await fetch_live_data(session_id, request)
+    horizon = session.get("horizon", "Next month")
+    prediction_query = session.get("prediction_query", "")
+    
+    # Mark as fetching and kick off background task
+    await db.sessions.update_one(
+        {"id": session_id},
+        {"$set": {"live_fetch_status": "fetching", "live_fetch_error": None, "live_progress": "Refreshing..."}}
+    )
+    asyncio.create_task(run_live_fetch(session_id, topic, horizon, prediction_query))
+    return JSONResponse(status_code=202, content={"status": "fetching", "message": "Refresh started"})
 
 
 @api_router.post("/sessions/{session_id}/inject-variable")

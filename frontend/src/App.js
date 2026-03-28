@@ -483,22 +483,56 @@ const UploadStep = ({ sessionId, onComplete }) => {
     addLog(`Prediction horizon: ${horizon}`);
 
     try {
-      addLog("Searching web for latest information...");
-      const response = await axios.post(`${API}/sessions/${sessionId}/fetch-live`, {
+      // Kick off background fetch (returns 202 immediately)
+      await axios.post(`${API}/sessions/${sessionId}/fetch-live`, {
         topic: topic,
         horizon: horizon,
         prediction_query: query || `What will happen with ${topic} in the ${horizon.toLowerCase()}?`
-      }, { timeout: 90000 });
+      }, { timeout: 15000 });
       
-      addLog(`Found ${response.data.sources_count} sources`, "success");
-      addLog(`Extracted ${response.data.graph.entities?.length || 0} entities`, "success");
-      setGraph(response.data.graph);
-      setIntelBrief(response.data.intel_brief);
+      // Poll for status with progress updates
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusRes = await axios.get(`${API}/sessions/${sessionId}/live-status`, { timeout: 10000 });
+          const data = statusRes.data;
+          
+          // Show progress messages in the log
+          if (data.progress && data.status === "fetching") {
+            addLog(data.progress);
+          }
+          
+          if (data.status === "completed") {
+            clearInterval(pollInterval);
+            addLog(`Extracted ${data.graph?.entities?.length || 0} entities`, "success");
+            addLog(`Found ${data.graph?.relationships?.length || 0} relationships`, "success");
+            setGraph(data.graph);
+            setIntelBrief(data.intel_brief);
+            setLoading(false);
+          } else if (data.status === "failed") {
+            clearInterval(pollInterval);
+            const errMsg = data.error || "Live fetch failed";
+            addLog(`Error: ${errMsg}`, "error");
+            setError(errMsg);
+            setLoading(false);
+          }
+        } catch (pollErr) {
+          // Transient polling error, keep trying
+        }
+      }, 1500);
+      
+      // Safety timeout after 3 minutes
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        if (!graph) {
+          setError("Live intelligence fetch is taking too long. Please try again.");
+          setLoading(false);
+        }
+      }, 180000);
+      
     } catch (err) {
-      const errorMsg = err.response?.data?.detail || "Failed to fetch live data";
+      const errorMsg = err.response?.data?.detail || "Failed to start live fetch";
       addLog(`Error: ${errorMsg}`, "error");
       setError(errorMsg);
-    } finally {
       setLoading(false);
     }
   };

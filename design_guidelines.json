@@ -1,0 +1,142 @@
+{
+  "theme": "dark",
+  "archetype": "Archetype 4: Swiss & High-Contrast (Dark Variant) / Tactical Data Dashboard",
+  "colors": {
+    "background": {
+      "base": "bg-gray-950",
+      "hex": "#030712",
+      "description": "Deepest Obsidian, used for the main application background."
+    },
+    "surface": {
+      "card": "bg-gray-900",
+      "hover": "bg-gray-800",
+      "modal": "bg-gray-900/95 backdrop-blur-xl",
+      "description": "Flat, solid panels for widgets and cards. No transparent backgrounds on elements requiring text readability."
+    },
+    "border": {
+      "default": "border-gray-800",
+      "focus": "border-blue-500",
+      "description": "1px crisp strokes for 'Technical/Grid' look. No soft, muddy shadows."
+    },
+    "text": {
+      "primary": "text-white",
+      "secondary": "text-gray-400",
+      "muted": "text-gray-500",
+      "accent": "text-blue-400"
+    },
+    "accents": {
+      "primary": "bg-blue-600",
+      "primary_hover": "bg-blue-500",
+      "risk": "text-red-500 bg-red-500/10 border-red-500/20",
+      "success": "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
+      "warning": "text-amber-400 bg-amber-500/10 border-amber-500/20",
+      "factions": {
+        "cyan": "#06b6d4",
+        "magenta": "#d946ef",
+        "orange": "#f97316",
+        "lime": "#84cc16"
+      }
+    }
+  },
+  "typography": {
+    "font_family": {
+      "headings": "'Chivo', sans-serif",
+      "body": "'IBM Plex Sans', sans-serif",
+      "mono": "'JetBrains Mono', monospace"
+    },
+    "rules": {
+      "h1": "text-4xl sm:text-5xl font-black tracking-tighter text-white",
+      "h2": "text-2xl sm:text-3xl font-bold tracking-tight text-white",
+      "h3": "text-xl font-semibold tracking-tight text-white",
+      "body": "text-base font-normal leading-relaxed text-gray-300",
+      "small": "text-sm text-gray-400",
+      "overline": "text-xs font-bold uppercase tracking-[0.2em] text-gray-500",
+      "mono_data": "font-mono text-sm tracking-tight text-blue-400"
+    }
+  },
+  "layout_and_spacing": {
+    "philosophy": "Control Room Grid Protocol. Dense, functional, optimized for scanning. Every pixel is purposeful.",
+    "container": "w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8",
+    "grid": {
+      "dashboard": "grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6",
+      "feeds": "grid grid-cols-1 lg:grid-cols-2 gap-6",
+      "agents": "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4"
+    },
+    "spacing": {
+      "section_gap": "gap-8 md:gap-12",
+      "card_padding": "p-4 sm:p-6"
+    }
+  },
+  "components": {
+    "header": {
+      "style": "sticky top-0 z-50 w-full border-b border-gray-800 bg-gray-950/80 backdrop-blur-xl",
+      "logo": "text-2xl font-black tracking-tighter flex items-center gap-2",
+      "logo_emoji": "🐟"
+    },
+    "wizard_stepper": {
+      "style": "flex items-center justify-between w-full max-w-3xl mx-auto mb-12",
+      "step_active": "flex items-center gap-2 text-blue-400 font-semibold",
+      "step_inactive": "flex items-center gap-2 text-gray-600",
+      "connector": "flex-1 h-px bg-gray-800 mx-4"
+    },
+    "upload_zone": {
+      "style": "border-2 border-dashed border-gray-700 hover:border-blue-500 bg-gray-900/50 rounded-xl p-12 text-center transition-colors cursor-pointer relative overflow-hidden group",
+      "icon_style": "w-12 h-12 text-gray-500 group-hover:text-blue-400 mx-auto mb-4 transition-colors"
+    },
+    "agent_card": {
+      "container": "bg-gray-900 border border-gray-800 rounded-lg p-4 flex flex-col items-center text-center hover:border-gray-600 transition-colors",
+      "avatar": "text-4xl mb-2",
+      "name": "text-sm font-bold text-white truncate w-full",
+      "occupation": "text-xs text-gray-400 truncate w-full mb-2",
+      "badge": "text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
+    },
+    "social_feeds": {
+      "container": "flex flex-col h-[600px] border border-gray-800 rounded-xl bg-gray-900 overflow-hidden",
+      "header": "px-4 py-3 border-b border-gray-800 flex items-center justify-between bg-gray-950",
+      "feed_area": "flex-1 overflow-y-auto p-4 space-y-4",
+      "tweet_card": "p-4 border border-gray-800 rounded-lg bg-gray-950/50 hover:bg-gray-800/50 transition-colors",
+      "reddit_card": "p-4 border border-gray-800 rounded-lg bg-gray-950/50 hover:bg-gray-800/50 transition-colors border-l-2 border-l-orange-500"
+    },
+    "report_dashboard": {
+      "gauge": "relative flex items-center justify-center w-48 h-48 rounded-full border-4 border-gray-800",
+      "faction_card": "p-4 rounded-lg border border-gray-800 bg-gray-900",
+      "risk_factor_list": "space-y-2",
+      "risk_item": "flex items-center gap-3 p-3 rounded bg-red-500/5 border border-red-500/10 text-red-400 text-sm"
+    },
+    "chat_interface": {
+      "sidebar": "w-64 border-r border-gray-800 bg-gray-950 h-full overflow-y-auto",
+      "chat_area": "flex-1 flex flex-col bg-gray-900",
+      "message_bubble_user": "bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-2 max-w-[80%]",
+      "message_bubble_agent": "bg-gray-800 text-gray-200 rounded-2xl rounded-tl-sm px-4 py-2 max-w-[80%]"
+    }
+  },
+  "interactive_states": {
+    "hover": "Always explicitly define hover text colors, e.g., hover:bg-gray-800 hover:text-white.",
+    "focus": "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-950",
+    "transitions": "transition-all duration-200 ease-in-out"
+  },
+  "icons": {
+    "library": "lucide-react",
+    "usage": "Use crisp, minimalist icons matching the 1px grid layout aesthetic. No filled icons unless for active states."
+  },
+  "media": {
+    "image_urls": [
+      {
+        "url": "https://images.unsplash.com/photo-1737505599162-d9932323a889?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1ODF8MHwxfHNlYXJjaHwxfHxhYnN0cmFjdCUyMGRhcmslMjBub2RlcyUyMG5ldHdvcmt8ZW58MHx8fHwxNzc0NjczMjE2fDA&ixlib=rb-4.1.0&q=85",
+        "category": "abstract_background",
+        "description": "Abstract dark nodes network for the empty state or background of the 'Upload Seed' drag-and-drop zone to emphasize the network/swarm theme. Use it with a heavy overlay (e.g., bg-gray-950/80)."
+      }
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Strictly follow the 'Control Room Grid' protocol for the dashboard. Use border-collapse or 1px borders between panels to look highly technical.",
+    "Do NOT use pure black (#000000). Use bg-gray-950 for backgrounds and bg-gray-900 for cards.",
+    "For the 5-step wizard, ensure the step indicator is sticky or permanently visible at the top below the header.",
+    "In the Agent Cards grid, use actual Emojis for avatars. Represent personalities through different text/badge colors.",
+    "For the Dual Social Media Feeds (Simulate Step), build a side-by-side grid layout (lg:grid-cols-2). The left feed simulates Twitter (use standard tweet layouts, blue highlights), the right feed simulates Reddit (use upvote/downvote layouts, orange highlights).",
+    "In the Chat Interface, layout a traditional sidebar + main chat area. Keep the bubbles tight and corporate-looking.",
+    "Ensure Shadcn UI components are installed and customized to strip out default white shadows/borders; everything must conform to the dark theme border-gray-800 rules.",
+    "Use data-testid attributes on all interactive elements (e.g., data-testid='upload-seed-button', data-testid='start-simulation-button').",
+    "For the Report Dashboard, utilize Recharts (styled darkly) or visually distinct HTML elements for the confidence gauge and faction distribution."
+  ]
+}

@@ -347,10 +347,16 @@ const AgentStep = ({ sessionId, graph, onComplete }) => {
     try {
       const response = await axios.post(`${API}/sessions/${sessionId}/generate-agents`, {
         num_agents: numAgents,
-      });
+      }, { timeout: 120000 }); // 2 minute timeout for large agent counts
       setAgents(response.data.agents);
     } catch (err) {
-      setError(err.response?.data?.detail || "Failed to generate agents");
+      const errorMsg = err.response?.data?.detail || err.message || "Failed to generate agents";
+      // Provide more helpful error message
+      if (errorMsg.includes("502") || errorMsg.includes("timeout") || errorMsg.includes("Gateway")) {
+        setError("Server temporarily busy. Please try again with fewer agents or wait a moment.");
+      } else {
+        setError(errorMsg);
+      }
     } finally {
       setLoading(false);
     }
@@ -408,9 +414,18 @@ const AgentStep = ({ sessionId, graph, onComplete }) => {
       </div>
 
       {error && (
-        <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-lg flex items-center gap-3 text-red-400">
-          <AlertCircle className="w-5 h-5 flex-shrink-0" />
-          <span>{error}</span>
+        <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-lg">
+          <div className="flex items-center gap-3 text-red-400 mb-3">
+            <AlertCircle className="w-5 h-5 flex-shrink-0" />
+            <span>{error}</span>
+          </div>
+          <button
+            data-testid="retry-agents-button"
+            onClick={handleGenerate}
+            className="text-sm px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg transition-colors"
+          >
+            Try Again
+          </button>
         </div>
       )}
 

@@ -74,60 +74,75 @@ def clean_json_response(text: str) -> str:
     return text.strip()
 
 
-async def call_claude(system_prompt: str, user_prompt: str, max_tokens: int = 3000, image_data: dict = None) -> str:
-    """Call Claude API using emergentintegrations or litellm for images"""
+async def call_claude(system_prompt: str, user_prompt: str, max_tokens: int = 3000, image_data: dict = None, retries: int = 3) -> str:
+    """Call Claude API using emergentintegrations or litellm for images with retry logic"""
     api_key = os.environ.get('EMERGENT_LLM_KEY')
     if not api_key:
         raise HTTPException(status_code=500, detail="EMERGENT_LLM_KEY not configured")
     
-    # If image data is provided, use litellm directly with Emergent proxy
-    if image_data:
-        import litellm
-        from emergentintegrations.llm.chat import get_integration_proxy_url
-        
-        proxy_url = get_integration_proxy_url()
-        
-        # Build the message with image
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": [
+    last_error = None
+    
+    for attempt in range(retries):
+        try:
+            # If image data is provided, use litellm directly with Emergent proxy
+            if image_data:
+                import litellm
+                from emergentintegrations.llm.chat import get_integration_proxy_url
+                
+                proxy_url = get_integration_proxy_url()
+                
+                # Build the message with image
+                messages = [
+                    {"role": "system", "content": system_prompt},
                     {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{image_data['media_type']};base64,{image_data['base64']}"
-                        }
-                    },
-                    {
-                        "type": "text",
-                        "text": user_prompt
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{image_data['media_type']};base64,{image_data['base64']}"
+                                }
+                            },
+                            {
+                                "type": "text",
+                                "text": user_prompt
+                            }
+                        ]
                     }
                 ]
-            }
-        ]
-        
-        response = litellm.completion(
-            model="claude-sonnet-4-20250514",
-            messages=messages,
-            api_key=api_key,
-            api_base=proxy_url + "/llm",
-            custom_llm_provider="openai",
-            max_tokens=max_tokens
-        )
-        return response.choices[0].message.content
+                
+                response = litellm.completion(
+                    model="claude-sonnet-4-20250514",
+                    messages=messages,
+                    api_key=api_key,
+                    api_base=proxy_url + "/llm",
+                    custom_llm_provider="openai",
+                    max_tokens=max_tokens,
+                    timeout=90
+                )
+                return response.choices[0].message.content
+            
+            # For text-only, use emergentintegrations
+            chat = LlmChat(
+                api_key=api_key,
+                session_id=str(uuid.uuid4()),
+                system_message=system_prompt
+            )
+            chat.with_model("anthropic", "claude-sonnet-4-20250514")
+            
+            user_message = UserMessage(text=user_prompt)
+            response = await chat.send_message(user_message)
+            return response
+            
+        except Exception as e:
+            last_error = e
+            logger.warning(f"Claude API attempt {attempt + 1}/{retries} failed: {str(e)[:100]}")
+            if attempt < retries - 1:
+                await asyncio.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s, 4s
+                continue
+            raise
     
-    # For text-only, use emergentintegrations
-    chat = LlmChat(
-        api_key=api_key,
-        session_id=str(uuid.uuid4()),
-        system_message=system_prompt
-    )
-    chat.with_model("anthropic", "claude-sonnet-4-20250514")
-    
-    user_message = UserMessage(text=user_prompt)
-    response = await chat.send_message(user_message)
-    return response
+    raise last_error
 
 
 async def parse_document(file: UploadFile) -> tuple[str, dict]:

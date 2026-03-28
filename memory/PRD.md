@@ -1,45 +1,54 @@
 # SwarmSim - Swarm Intelligence Prediction Engine
 
 ## Original Problem Statement
-Build SwarmSim - a web application that allows users to upload documents, pose prediction questions, and utilizes AI agents to simulate social media discussions and generate structured prediction reports.
+Build SwarmSim - a web application for AI-powered social prediction simulations. Users upload documents or use live intelligence mode, generate AI agent personas, run multi-round social media simulations, and get prediction reports.
 
 ## Architecture
-- **Frontend**: React with Tailwind CSS, dark theme
-- **Backend**: FastAPI (Python) with multi-agent architecture
+- **Frontend**: React + Tailwind CSS + Recharts
+- **Backend**: FastAPI (Python) with dual agent architectures
 - **Database**: MongoDB
 - **LLM**: Anthropic Claude (claude-sonnet-4-20250514) via Emergent LLM Key
 - **Financial Data**: yfinance (free)
 - **News RSS**: Google News RSS via feedparser (free)
 
-### Multi-Agent Architecture
+### Agent Architectures
 ```
-/app/backend/services/agents/
-  orchestrator.py   — Coordinates full pipeline, validates output, retries
-  intel_agent.py    — Intelligence gathering, news synthesis, brief generation
-  graph_agent.py    — Entity/relationship extraction, min-entity validation
-  persona_agent.py  — Diverse persona generation, diversity scoring, rebalancing
-  sim_director.py   — Multi-round simulation, round narratives, herd detection
-  critic_agent.py   — Bias check, diversity score, herd detection, report quality
-  report_agent.py   — Prediction report with narrative arc context
-  common.py         — Shared utilities (JSON cleaning)
+/app/backend/agents/           — AI Enhancement agents (NEW)
+  critic.py                     — Herd detection, diversity scoring, report quality
+  belief_tracker.py             — Bayesian belief position tracking per agent
+  emotional_contagion.py        — Emotion spread with personality susceptibility
+  network.py                    — Hub/peripheral assignment, Pareto follower counts
+
+/app/backend/services/agents/  — Pipeline orchestration agents
+  orchestrator.py               — Coordinates Intel/Graph/Persona/Sim/Report pipeline
+  intel_agent.py                — News synthesis + brief generation
+  graph_agent.py                — Entity/relationship extraction
+  persona_agent.py              — Diverse persona generation + rebalancing
+  sim_director.py               — (Legacy) Multi-round simulation
+  critic_agent.py               — (Legacy) LLM-based evaluation
+  report_agent.py               — Prediction report with narrative arc
 ```
 
-### Pipeline Flow
-1. Intel Agent → Critic bias check (rewrite if bias>7) → Graph Agent
-2. Persona Agent → Critic diversity score (rebalance if <0.6)
-3. SimDirector (per-round: narratives, Critic herd check, contrarian injection if herd>0.7)
-4. Report Agent → Critic quality score (0-10) + overconfidence flag
+### Simulation Pipeline (New)
+1. Network assignment (10% hubs, Pareto followers)
+2. Belief + emotion initialisation
+3. Per-round: batch post gen → belief update → emotion spread → herd check → narrative
+4. Contrarian event injection when herd>0.7
+5. Report generation → pure Python quality scoring
 
 ## What's Implemented (All Complete)
-- Full 5-step wizard UI (Upload/Live → Agents → Simulation → Report → Chat)
-- Background task pattern for all long-running ops
-- 8 DuckDuckGo web searches + Google News RSS headlines
-- Verified real-time financial data (yfinance, 30+ tickers)
-- Interactive force-directed knowledge graph
-- PDF report download
-- Simulation Quality badge (Excellent/Good/Fair/Low)
-- Herd detection + contrarian event injection
+- Full 5-step wizard UI
+- Live Intelligence Mode (8 web searches + Google News RSS + yfinance)
+- Background tasks for all long-running ops (live-fetch, agents, simulation)
+- Agent limit raised to 300
+- Batch post generation (10 agents per Claude call)
+- Belief tracking (position + certainty per agent, updated per round)
+- Emotional contagion (valence/arousal, personality-based susceptibility)
+- Network effects (hub/peripheral agents, Pareto follower distribution)
+- Herd detection with automatic contrarian event injection
 - Round narratives for temporal context
+- Quality scoring (0-10) on reports with overconfidence flagging
+- UI: EmotionalTemperatureGauge, SentimentChart, HUB badges, belief indicators, story arc
 
 ## Prioritized Backlog
 ### P1: Session history, graph zoom/pan

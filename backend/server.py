@@ -103,6 +103,124 @@ def detect_topic_category(topic: str) -> str:
     return "general"
 
 
+# Financial ticker mapping for real-time price data
+TICKER_MAP = {
+    # Indian indices
+    "bank nifty": "^NSEBANK",
+    "banknifty": "^NSEBANK",
+    "nifty bank": "^NSEBANK",
+    "nifty 50": "^NSEI",
+    "nifty50": "^NSEI",
+    "nifty": "^NSEI",
+    "sensex": "^BSESN",
+    # US indices
+    "s&p 500": "^GSPC",
+    "s&p500": "^GSPC",
+    "dow jones": "^DJI",
+    "nasdaq": "^IXIC",
+    # Crypto
+    "bitcoin": "BTC-USD",
+    "btc": "BTC-USD",
+    "ethereum": "ETH-USD",
+    "eth": "ETH-USD",
+    # Major stocks
+    "tesla": "TSLA",
+    "apple": "AAPL",
+    "google": "GOOGL",
+    "microsoft": "MSFT",
+    "amazon": "AMZN",
+    "nvidia": "NVDA",
+    "meta": "META",
+    # Indian stocks
+    "reliance": "RELIANCE.NS",
+    "tcs": "TCS.NS",
+    "infosys": "INFY.NS",
+    "hdfc bank": "HDFCBANK.NS",
+    "hdfc": "HDFCBANK.NS",
+    "icici bank": "ICICIBANK.NS",
+    "icici": "ICICIBANK.NS",
+    "sbi": "SBIN.NS",
+    "state bank": "SBIN.NS",
+    # Commodities
+    "gold": "GC=F",
+    "silver": "SI=F",
+    "crude oil": "CL=F",
+    "oil": "CL=F",
+}
+
+
+def detect_tickers(topic: str) -> list:
+    """Detect relevant financial tickers from a topic string"""
+    topic_lower = topic.lower()
+    found = []
+    # Sort by key length descending to match longer phrases first
+    for keyword, ticker in sorted(TICKER_MAP.items(), key=lambda x: -len(x[0])):
+        if keyword in topic_lower and ticker not in found:
+            found.append(ticker)
+    return found[:5]  # Max 5 tickers
+
+
+async def fetch_financial_data(topic: str) -> dict:
+    """Fetch real-time financial data using yfinance for detected tickers"""
+    import yfinance as yf
+    
+    tickers = detect_tickers(topic)
+    if not tickers:
+        return {"has_data": False, "tickers": [], "data": []}
+    
+    results = []
+    for ticker_symbol in tickers:
+        try:
+            ticker = yf.Ticker(ticker_symbol)
+            info = ticker.info
+            
+            price = info.get("regularMarketPrice") or info.get("currentPrice")
+            prev_close = info.get("regularMarketPreviousClose") or info.get("previousClose")
+            
+            if not price:
+                # Try getting from history as fallback
+                hist = ticker.history(period="5d")
+                if not hist.empty:
+                    price = float(hist["Close"].iloc[-1])
+                    if len(hist) > 1:
+                        prev_close = float(hist["Close"].iloc[-2])
+            
+            if price:
+                change = None
+                change_pct = None
+                if prev_close and prev_close > 0:
+                    change = round(price - prev_close, 2)
+                    change_pct = round((change / prev_close) * 100, 2)
+                
+                result = {
+                    "symbol": ticker_symbol,
+                    "name": info.get("shortName") or info.get("longName") or ticker_symbol,
+                    "price": round(price, 2),
+                    "currency": info.get("currency", "USD"),
+                    "change": change,
+                    "change_pct": change_pct,
+                    "day_high": info.get("dayHigh") or info.get("regularMarketDayHigh"),
+                    "day_low": info.get("dayLow") or info.get("regularMarketDayLow"),
+                    "fifty_two_week_high": info.get("fiftyTwoWeekHigh"),
+                    "fifty_two_week_low": info.get("fiftyTwoWeekLow"),
+                    "volume": info.get("volume") or info.get("regularMarketVolume"),
+                    "market_cap": info.get("marketCap"),
+                    "prev_close": prev_close,
+                }
+                results.append(result)
+                logger.info(f"Fetched financial data for {ticker_symbol}: {price}")
+        except Exception as e:
+            logger.warning(f"Failed to fetch financial data for {ticker_symbol}: {e}")
+            continue
+    
+    return {
+        "has_data": len(results) > 0,
+        "tickers": tickers,
+        "data": results,
+        "fetched_at": datetime.now(timezone.utc).isoformat()
+    }
+
+
 def clean_json_response(text: str) -> str:
     """Strip markdown code fences and think tags from Claude responses"""
     # Remove think tags
@@ -455,14 +573,21 @@ async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_q
         # Update progress
         await db.sessions.update_one(
             {"id": session_id},
-            {"$set": {"live_progress": "Initializing web search...", "live_progress_step": 0, "live_progress_total": 8}}
+            {"$set": {"live_progress": "Initializing web search...", "live_progress_step": 0, "live_progress_total": 9}}
         )
         
-        # Fetch live web data (5-8 searches)
+        # Fetch real-time financial data first (if applicable)
+        await db.sessions.update_one(
+            {"id": session_id},
+            {"$set": {"live_progress": "Fetching real-time market data...", "live_progress_step": 0}}
+        )
+        financial_data = await fetch_financial_data(topic)
+        
+        # Fetch live web data (8 searches)
         logger.info(f"Fetching live data for topic: {topic}")
         web_data = await fetch_web_data(topic, horizon, session_id=session_id)
         
-        if not web_data.get("results"):
+        if not web_data.get("results") and not financial_data.get("has_data"):
             await db.sessions.update_one(
                 {"id": session_id},
                 {"$set": {"live_fetch_status": "failed", "live_fetch_error": "Could not fetch live data. Please try a different topic."}}
@@ -481,19 +606,44 @@ async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_q
             context_parts.append(f"- {result['title']}: {result['snippet']}")
         web_context = "\n".join(context_parts)
         
+        # Build real-time financial context
+        financial_context = ""
+        if financial_data.get("has_data"):
+            fin_parts = ["\n=== VERIFIED REAL-TIME MARKET DATA (use these exact numbers) ==="]
+            for fd in financial_data["data"]:
+                line = f"- {fd['name']} ({fd['symbol']}): {fd['currency']} {fd['price']}"
+                if fd.get("change") is not None:
+                    direction = "up" if fd["change"] > 0 else "down"
+                    line += f" | Change: {fd['change']:+.2f} ({fd['change_pct']:+.2f}%) [{direction}]"
+                if fd.get("prev_close"):
+                    line += f" | Previous Close: {fd['prev_close']}"
+                if fd.get("day_high") and fd.get("day_low"):
+                    line += f" | Day Range: {fd['day_low']}-{fd['day_high']}"
+                if fd.get("fifty_two_week_low") and fd.get("fifty_two_week_high"):
+                    line += f" | 52-Week Range: {fd['fifty_two_week_low']}-{fd['fifty_two_week_high']}"
+                if fd.get("volume"):
+                    line += f" | Volume: {fd['volume']:,}"
+                fin_parts.append(line)
+            fin_parts.append("=== END VERIFIED MARKET DATA ===\n")
+            financial_context = "\n".join(fin_parts)
+        
         # Generate intelligence brief using Claude
-        system_prompt = """You are an intelligence analyst creating a brief on a current topic. Based on the web data provided, create a structured intelligence brief of 800-1200 words. Respond ONLY with valid JSON, no markdown fences."""
+        system_prompt = """You are an intelligence analyst creating a brief on a current topic. Based on the web data provided, create a structured intelligence brief of 800-1200 words. 
+CRITICAL: If real-time market data is provided (marked as VERIFIED), you MUST use those exact price figures in your analysis. Do NOT invent or estimate prices — use only the verified data provided.
+Respond ONLY with valid JSON, no markdown fences."""
         
         user_prompt = f"""Topic: {topic}
 Prediction Horizon: {horizon}
 Prediction Question: {prediction_query}
-
+{financial_context}
 Live Web Data ({len(web_data['results'])} sources):
 {web_context}
 
-Generate a comprehensive intelligence brief (800-1200 words in the summary). Return JSON:
+Generate a comprehensive intelligence brief (800-1200 words in the summary). IMPORTANT: If VERIFIED REAL-TIME MARKET DATA is provided above, use those exact prices and figures in your summary and data_points. Do NOT make up different numbers.
+
+Return JSON:
 {{
-  "summary": "Detailed 800-1200 word executive summary synthesizing all findings, covering current state, key developments, stakeholder positions, data trends, and outlook",
+  "summary": "Detailed 800-1200 word executive summary synthesizing all findings, covering current state, key developments, stakeholder positions, data trends, and outlook. Use verified market prices if available.",
   "key_developments": ["recent development 1", "recent development 2", "recent development 3", "recent development 4", "recent development 5"],
   "stakeholders": [
     {{"name": "Stakeholder Name", "position": "Their current stance or action", "influence": "high|medium|low"}}
@@ -527,6 +677,10 @@ Extract 10-20 entities and 15-30 relationships based on the live data."""
         response = await call_claude(system_prompt, user_prompt, max_tokens=4000)
         cleaned = clean_json_response(response)
         intel_brief = json.loads(cleaned)
+        
+        # Inject verified financial data into intel_brief for frontend display
+        if financial_data.get("has_data"):
+            intel_brief["verified_market_data"] = financial_data["data"]
         
         # Create graph structure from intel brief
         graph = {

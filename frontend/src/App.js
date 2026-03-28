@@ -611,6 +611,30 @@ const UploadStep = ({ sessionId, onComplete }) => {
                 )}
               </div>
             )}
+
+            {/* Verified Market Data for Live Mode */}
+            {mode === "live" && intelBrief?.verified_market_data && intelBrief.verified_market_data.length > 0 && (
+              <div data-testid="verified-market-data" className="mb-4 bg-gray-950 rounded-xl p-3 border border-emerald-500/30">
+                <p className="text-xs text-emerald-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  <CheckCircle className="w-3 h-3" /> Verified Real-Time Data
+                </p>
+                <div className="space-y-2">
+                  {intelBrief.verified_market_data.map((md, i) => (
+                    <div key={i} className="flex items-center justify-between">
+                      <span className="text-sm text-white font-medium">{md.name}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-white mono">{md.currency} {md.price?.toLocaleString()}</span>
+                        {md.change_pct != null && (
+                          <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${md.change_pct >= 0 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                            {md.change_pct >= 0 ? '+' : ''}{md.change_pct}%
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             
             <div className="flex flex-wrap gap-2 mb-5">
               {graph.themes?.map((theme, i) => (

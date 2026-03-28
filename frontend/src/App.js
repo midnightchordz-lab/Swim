@@ -918,63 +918,6 @@ const UploadStep = ({ sessionId, onComplete }) => {
           )}
         </div>
       </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Prediction Question */}
-          <div className="mt-6">
-            <label className="block text-sm font-semibold text-white mb-2">
-              🎯 Prediction Question
-            </label>
-            <div className="relative">
-              <textarea
-                data-testid="prediction-query-input"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="What do you want to predict? Be specific..."
-                className="w-full h-24 px-4 py-3 bg-gray-950 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 resize-none transition-all"
-              />
-            </div>
-            
-            <div className="mt-3 flex flex-wrap gap-2">
-              <span className="text-xs text-gray-500 mr-2">Try:</span>
-              {exampleQuestions.map((q, i) => (
-                <button
-                  key={i}
-                  onClick={() => setQuery(q)}
-                  className="text-xs px-3 py-1.5 bg-gray-800 hover:bg-blue-500/20 text-gray-400 hover:text-blue-300 rounded-full transition-all duration-200 border border-transparent hover:border-blue-500/30"
-                >
-                  {q}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Submit Button */}
-          <button
-            data-testid="extract-graph-button"
-            onClick={handleSubmit}
-            disabled={!file || !query.trim() || loading}
-            className="w-full mt-6 py-4 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:from-gray-700 disabled:to-gray-700 disabled:cursor-not-allowed text-white font-bold rounded-xl flex items-center justify-center gap-3 transition-all duration-300 shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 disabled:shadow-none"
-          >
-            {loading ? (
-              <>
-                <Loader2 className="w-5 h-5 animate-spin" />
-                <span>Analyzing Document...</span>
-              </>
-            ) : (
-              <>
-                <Zap className="w-5 h-5" />
-                <span>Extract Knowledge Graph</span>
-                <ArrowRight className="w-5 h-5" />
-              </>
-            )}
-          </button>
-        </div>
-      </div>
 
       {/* Features */}
       <div className="grid grid-cols-3 gap-4 mt-8">

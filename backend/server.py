@@ -303,6 +303,43 @@ async def fetch_web_data(topic: str, horizon: str, session_id: str = None) -> di
     }
 
 
+def fetch_yahoo_news(topic: str) -> str:
+    """Fetch latest headlines from news RSS feeds (no API key needed)"""
+    import feedparser
+    from urllib.parse import quote
+    
+    headlines = []
+    
+    # Primary: Google News RSS
+    try:
+        url = f"https://news.google.com/rss/search?q={quote(topic)}&hl=en&gl=US&ceid=US:en"
+        feed = feedparser.parse(url)
+        for entry in feed.entries[:10]:
+            title = entry.get("title", "")
+            summary = entry.get("summary", "")[:150]
+            published = entry.get("published", "")
+            source = entry.get("source", {}).get("title", "Google News")
+            headlines.append(f"[{source}] {title} — {summary} ({published})")
+    except Exception as e:
+        logger.warning(f"Google News RSS failed: {e}")
+    
+    # Fallback: Yahoo News RSS
+    if not headlines:
+        try:
+            url = f"https://news.search.yahoo.com/rss?p={quote(topic)}&count=10"
+            feed = feedparser.parse(url)
+            for entry in feed.entries[:10]:
+                title = entry.get("title", "")
+                summary = entry.get("summary", "")[:150]
+                published = entry.get("published", "")
+                source = entry.get("source", {}).get("title", "Yahoo News")
+                headlines.append(f"[{source}] {title} — {summary} ({published})")
+        except Exception as e:
+            logger.warning(f"Yahoo News RSS failed: {e}")
+    
+    return "\n".join(headlines)
+
+
 async def call_claude(system_prompt: str, user_prompt: str, max_tokens: int = 3000, image_data: dict = None, retries: int = 3) -> str:
     """Call Claude API using emergentintegrations or litellm for images with retry logic"""
     api_key = os.environ.get('EMERGENT_LLM_KEY')
@@ -583,6 +620,14 @@ async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_q
         )
         financial_data = await fetch_financial_data(topic)
         
+        # Fetch Yahoo News RSS headlines (no API key needed)
+        await db.sessions.update_one(
+            {"id": session_id},
+            {"$set": {"live_progress": "Fetching latest news headlines...", "live_progress_step": 1}}
+        )
+        yahoo_headlines = fetch_yahoo_news(topic)
+        logger.info(f"Yahoo News headlines fetched: {len(yahoo_headlines.splitlines())} items")
+        
         # Fetch live web data (8 searches)
         logger.info(f"Fetching live data for topic: {topic}")
         web_data = await fetch_web_data(topic, horizon, session_id=session_id)
@@ -636,10 +681,15 @@ Respond ONLY with valid JSON, no markdown fences."""
 Prediction Horizon: {horizon}
 Prediction Question: {prediction_query}
 {financial_context}
+Latest headlines for {topic}:
+{yahoo_headlines}
+
 Live Web Data ({len(web_data['results'])} sources):
 {web_context}
 
-Generate a comprehensive intelligence brief (800-1200 words in the summary). IMPORTANT: If VERIFIED REAL-TIME MARKET DATA is provided above, use those exact prices and figures in your summary and data_points. Do NOT make up different numbers.
+Using these as your primary source, write a comprehensive 800-word intel brief covering all angles relevant to the prediction horizon: {horizon}
+
+IMPORTANT: If VERIFIED REAL-TIME MARKET DATA is provided above, use those exact prices and figures in your summary and data_points. Do NOT make up different numbers.
 
 Return JSON:
 {{

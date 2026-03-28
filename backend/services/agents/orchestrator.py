@@ -173,10 +173,17 @@ async def run_report_pipeline(session_id: str, call_claude_fn, db) -> dict:
     query = session["prediction_query"]
     total_rounds = session.get("total_rounds", 5)
 
-    # Get round narratives
+    # Get round narratives (may be list or JSON string)
     round_narratives = []
-    if session.get("round_narratives"):
-        round_narratives = json.loads(session["round_narratives"])
+    rn = session.get("round_narratives")
+    if rn:
+        if isinstance(rn, list):
+            round_narratives = rn
+        elif isinstance(rn, str):
+            try:
+                round_narratives = json.loads(rn)
+            except (json.JSONDecodeError, TypeError):
+                round_narratives = [rn]
 
     # Get posts
     posts = await db.sim_posts.find(

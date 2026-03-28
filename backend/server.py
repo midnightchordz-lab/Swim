@@ -19,6 +19,14 @@ import io
 import base64
 import httpx
 
+from agents import (
+    check_herd, score_diversity, get_missing_personalities,
+    initialise_beliefs, update_beliefs, get_belief_summary,
+    assign_network_properties, get_visible_posts, get_network_stats,
+    initialise_emotions, spread_emotions,
+    get_emotional_temperature, get_emotion_label,
+)
+
 # Load environment variables first
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -55,7 +63,7 @@ class SessionResponse(BaseModel):
     session_id: str
 
 class GenerateAgentsRequest(BaseModel):
-    num_agents: int = Field(default=20, ge=10, le=50)
+    num_agents: int = Field(default=20, ge=10, le=300)
 
 class SimulateRequest(BaseModel):
     num_rounds: int = Field(default=5, ge=3, le=15)
@@ -942,14 +950,224 @@ async def get_agent_status(session_id: str):
 
 
 async def run_simulation(session_id: str, num_rounds: int):
-    """Background task: orchestrator runs Simulation Director pipeline."""
-    from services.agents import orchestrator
     try:
-        await orchestrator.run_simulation_pipeline(
-            session_id, num_rounds, call_claude, db
+        session = await db.sessions.find_one({"id": session_id})
+        if not session:
+            return
+
+        agents = json.loads(session["agents_json"])
+        graph = json.loads(session["graph_json"])
+        query = session["prediction_query"]
+
+        # Initialise AI enhancements
+        agents = assign_network_properties(agents, seed=42)
+        agents = initialise_beliefs(agents)
+        agents = initialise_emotions(agents)
+        network_stats = get_network_stats(agents)
+        hub_ids = set(network_stats.get("hub_ids", []))
+
+        logger.info(f"[Sim] {session_id[:8]} — {len(agents)} agents, {network_stats['hub_count']} hubs")
+
+        await db.sessions.update_one(
+            {"id": session_id},
+            {"$set": {"current_round": 0, "total_rounds": num_rounds,
+                      "network_stats": network_stats}}
         )
+
+        all_posts = []
+        round_narratives = []
+        BATCH_SIZE = 10
+
+        for round_num in range(1, num_rounds + 1):
+            await db.sessions.update_one(
+                {"id": session_id},
+                {"$set": {"current_round": round_num}}
+            )
+
+            hub_agents = [a for a in agents if a["id"] in hub_ids]
+            non_hub = [a for a in agents if a["id"] not in hub_ids]
+            active_non_hub = random.sample(non_hub, k=max(3, int(len(non_hub)*random.uniform(0.55,0.75))))
+            active_agents = hub_agents + active_non_hub
+
+            recent_posts = all_posts[-10:]
+            recent_context = "\n".join([
+                f"{p['platform']}: {p['agent_name']}: {p['content']}"
+                for p in recent_posts
+            ]) if recent_posts else "No previous posts yet."
+
+            director_context = f"\nPrevious round summary: {round_narratives[-1]}" if round_narratives else ""
+
+            emo_temp = get_emotional_temperature(agents)
+            emotional_context = (
+                f"\nCurrent crowd mood: {emo_temp['state']} (valence: {emo_temp['mean_valence']:+.2f})"
+                if emo_temp["state"] != "calm" else ""
+            )
+
+            # Batch post generation
+            round_posts = []
+            batches = [active_agents[i:i+BATCH_SIZE] for i in range(0, len(active_agents), BATCH_SIZE)]
+
+            for batch in batches:
+                agents_desc = "\n".join([
+                    f"Agent {i+1}: {a['name']} | {a['occupation']} | "
+                    f"{a['personality_type']} | Platform: {a['platform_preference']} | "
+                    f"Stance: {a['initial_stance']} | "
+                    f"Feeling: {get_emotion_label(a.get('emotional_state',{}).get('valence',0.0))}"
+                    for i, a in enumerate(batch)
+                ])
+
+                system_prompt = (
+                    "You are simulating diverse social media users. Write ONE authentic post per agent "
+                    "in their unique voice. Stay in character. "
+                    "Return ONLY a valid JSON array, no other text, no markdown."
+                )
+                user_prompt = f"""World context: {graph.get('summary','')[:1500]}
+Prediction question: {query}
+Round: {round_num}/{num_rounds}{director_context}{emotional_context}
+
+Recent posts:
+{recent_context}
+
+Write ONE post for EACH agent. Twitter: under 200 chars. Reddit: 2-4 sentences.
+
+{agents_desc}
+
+Return JSON array ONLY:
+[
+  {{"agent_index": 1, "content": "post text"}},
+  {{"agent_index": 2, "content": "post text"}}
+]"""
+
+                try:
+                    response = await call_claude(system_prompt, user_prompt, max_tokens=2000)
+                    cleaned = clean_json_response(response)
+                    posts_data = json.loads(cleaned)
+
+                    for item in posts_data:
+                        idx = item.get("agent_index", 1) - 1
+                        if 0 <= idx < len(batch):
+                            agent = batch[idx]
+                            content = item.get("content", "").strip()
+                            if not content:
+                                continue
+                            if agent.get("platform_preference") == "Twitter" and len(content) > 300:
+                                content = content[:280].rsplit(" ", 1)[0] + "..."
+
+                            post = {
+                                "session_id": session_id,
+                                "round": round_num,
+                                "agent_id": agent["id"],
+                                "agent_name": agent["name"],
+                                "agent_emoji": agent.get("avatar_emoji", ""),
+                                "platform": agent.get("platform_preference", "Twitter"),
+                                "content": content,
+                                "post_type": "post",
+                                "is_hub_post": agent["id"] in hub_ids,
+                                "influence_level": agent.get("influence_level", 5),
+                                "belief_position": agent.get("belief_state", {}).get("position", 0.0),
+                                "emotional_valence": agent.get("emotional_state", {}).get("valence", 0.0),
+                                "created_at": datetime.now(timezone.utc).isoformat()
+                            }
+                            await db.sim_posts.insert_one(post)
+                            all_posts.append(post)
+                            round_posts.append(post)
+                            agent["memories"] = agent.get("memories", [])[-9:] + \
+                                               [f"Round {round_num}: I posted: {content[:80]}"]
+                except Exception as e:
+                    logger.error(f"[Sim] Batch error round {round_num}: {e}")
+                    continue
+
+                await asyncio.sleep(1.0)
+
+            # Generate replies
+            if round_posts and len(active_agents) >= 2 and round_num >= 2:
+                n_replies = min(3, len(round_posts))
+                reply_agents = random.sample(active_agents, min(n_replies, len(active_agents)))
+                target_posts = random.sample(round_posts, min(n_replies, len(round_posts)))
+
+                for agent, target_post in zip(reply_agents, target_posts):
+                    if target_post["agent_id"] == agent["id"]:
+                        continue
+                    emo_label = get_emotion_label(agent.get("emotional_state",{}).get("valence",0.0))
+                    system_prompt = f"You are {agent['name']} ({agent['personality_type']}), feeling {emo_label}. Write a brief reply. Stay in character."
+                    user_prompt = (
+                        f"You are: {agent['name']} ({agent['occupation']})\n"
+                        f"Replying to {target_post['agent_name']}: \"{target_post['content']}\"\n"
+                        f"Platform: {target_post['platform']}\nWrite 1-2 sentences. Output ONLY the reply."
+                    )
+                    try:
+                        reply_content = (await call_claude(system_prompt, user_prompt, max_tokens=150)).strip()
+                        reply = {
+                            "session_id": session_id,
+                            "round": round_num,
+                            "agent_id": agent["id"],
+                            "agent_name": agent["name"],
+                            "agent_emoji": agent.get("avatar_emoji", ""),
+                            "platform": target_post["platform"],
+                            "content": reply_content,
+                            "post_type": "reply",
+                            "reply_to": target_post["agent_name"],
+                            "is_hub_post": agent["id"] in hub_ids,
+                            "influence_level": agent.get("influence_level", 5),
+                            "belief_position": agent.get("belief_state", {}).get("position", 0.0),
+                            "emotional_valence": agent.get("emotional_state", {}).get("valence", 0.0),
+                            "created_at": datetime.now(timezone.utc).isoformat()
+                        }
+                        await db.sim_posts.insert_one(reply)
+                        all_posts.append(reply)
+                        round_posts.append(reply)
+                    except Exception as e:
+                        logger.error(f"[Sim] Reply error: {e}")
+                    await asyncio.sleep(0.3)
+
+            # Update AI state
+            agents = update_beliefs(agents, round_posts, round_num)
+            agents = spread_emotions(agents, round_posts, round_num)
+
+            # Critic herd check
+            herd_check = check_herd(round_posts)
+            if herd_check["herd_detected"] and round_num < num_rounds:
+                logger.info(f"[Critic] Herd detected R{round_num}: {herd_check['dominant_sentiment']} at {herd_check['herd_score']:.0%}")
+                round_narratives.append(
+                    f"BREAKING: A prominent contrarian voice challenged the "
+                    f"{herd_check['dominant_sentiment']} consensus — some agents reconsidering."
+                )
+            elif round_posts and round_num < num_rounds:
+                try:
+                    sample_posts = "\n".join([f"{p['agent_name']}: {p['content'][:100]}" for p in round_posts[:6]])
+                    emo_temp2 = get_emotional_temperature(agents)
+                    belief_sum = get_belief_summary(agents)
+                    narrative = await call_claude(
+                        "You are a simulation narrator. Write concise 1-2 sentence round summaries.",
+                        f"Round {round_num}/{num_rounds} on: {query}\nPosts:\n{sample_posts}\n"
+                        f"Emotion: {emo_temp2['state']} | Support: {belief_sum['support']}% | "
+                        f"Opposition: {belief_sum['opposition']}%\nSummarise what happened and what's shifting.",
+                        max_tokens=120
+                    )
+                    round_narratives.append(narrative.strip())
+                except Exception as e:
+                    logger.error(f"[Sim] Narrative error: {e}")
+
+            logger.info(f"[Sim] Round {round_num} — {len(round_posts)} posts, mood: {get_emotional_temperature(agents)['state']}")
+
+        # Save final state
+        belief_summary = get_belief_summary(agents)
+        emotional_final = get_emotional_temperature(agents)
+
+        await db.sessions.update_one(
+            {"id": session_id},
+            {"$set": {
+                "status": "simulation_done",
+                "agents_json": json.dumps(agents),
+                "round_narratives": round_narratives,
+                "belief_summary": belief_summary,
+                "emotional_summary": emotional_final,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }}
+        )
+
     except Exception as e:
-        logger.error(f"Simulation error: {e}")
+        logger.error(f"[Sim] Fatal error {session_id}: {e}")
         await db.sessions.update_one(
             {"id": session_id},
             {"$set": {"status": "error", "error_message": str(e)}}
@@ -998,7 +1216,11 @@ async def get_simulation_status(session_id: str):
         "status": session.get("status"),
         "post_count": post_count,
         "current_round": session.get("current_round", 0),
-        "total_rounds": session.get("total_rounds", 0)
+        "total_rounds": session.get("total_rounds", 0),
+        "belief_summary": session.get("belief_summary"),
+        "emotional_summary": session.get("emotional_summary"),
+        "network_stats": session.get("network_stats"),
+        "round_narratives": session.get("round_narratives", []),
     }
 
 
@@ -1015,7 +1237,7 @@ async def get_posts(session_id: str):
 
 @api_router.post("/sessions/{session_id}/generate-report")
 async def generate_report(session_id: str):
-    """Generate prediction report via orchestrator Report + Critic pipeline."""
+    """Generate prediction report with round narratives and critic quality check."""
     from services.agents import orchestrator
     session = await db.sessions.find_one({"id": session_id})
     if not session:
@@ -1031,6 +1253,14 @@ async def generate_report(session_id: str):
     except Exception as e:
         logger.error(f"Claude API error: {e}")
         raise HTTPException(status_code=500, detail=f"AI processing error: {str(e)}")
+
+    # Use new critic check_report (pure Python, fast)
+    from agents import check_report as agents_check_report
+    quality = await agents_check_report(report, call_claude)
+    report["quality_score"] = quality.get("quality_score", 6)
+    report["quality_feedback"] = quality.get("recommendation", "")
+    report["overconfident"] = quality.get("overconfident", False)
+    report["quality_issues"] = quality.get("issues", [])
 
     await db.sessions.update_one(
         {"id": session_id},

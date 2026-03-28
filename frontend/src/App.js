@@ -10,6 +10,10 @@ import {
   Download, RefreshCw, Eye, EyeOff, Settings, Terminal,
   Globe, Radio, Clock, Wifi, PlusCircle, Sparkles, Shield
 } from "lucide-react";
+import {
+  AreaChart, Area, XAxis, YAxis, Tooltip as ReTooltip,
+  ResponsiveContainer, CartesianGrid,
+} from "recharts";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -157,6 +161,63 @@ const PERSONALITY_COLORS = {
 };
 
 // Header Component
+const EmotionalTemperatureGauge = ({ data }) => {
+  if (!data) return null;
+  const { state, mean_valence, mean_arousal } = data;
+  const stateColors = {
+    PANIC: "bg-red-500/20 text-red-400 border-red-500/40",
+    fear: "bg-orange-500/20 text-orange-400 border-orange-500/40",
+    agitated: "bg-yellow-500/20 text-yellow-400 border-yellow-500/40",
+    calm: "bg-gray-500/20 text-gray-400 border-gray-500/40",
+    optimism: "bg-emerald-500/20 text-emerald-400 border-emerald-500/40",
+    EUPHORIA: "bg-cyan-500/20 text-cyan-400 border-cyan-500/40",
+  };
+  const colorClass = stateColors[state] || stateColors.calm;
+  return (
+    <div data-testid="emotional-temperature" className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border ${colorClass}`}>
+      <span className="uppercase tracking-wider">{state}</span>
+      <span className="opacity-70">V:{mean_valence > 0 ? "+" : ""}{mean_valence?.toFixed(2)} A:{mean_arousal?.toFixed(2)}</span>
+    </div>
+  );
+};
+
+const SentimentChart = ({ posts }) => {
+  if (!posts || posts.length === 0) return null;
+  const rounds = {};
+  posts.forEach(p => {
+    const r = p.round;
+    if (!rounds[r]) rounds[r] = { round: r, positive: 0, negative: 0, neutral: 0, total: 0 };
+    const v = p.belief_position || p.emotional_valence || 0;
+    if (v > 0.15) rounds[r].positive++;
+    else if (v < -0.15) rounds[r].negative++;
+    else rounds[r].neutral++;
+    rounds[r].total++;
+  });
+  const chartData = Object.values(rounds).sort((a, b) => a.round - b.round).map(r => ({
+    name: `R${r.round}`,
+    positive: r.total ? Math.round((r.positive / r.total) * 100) : 0,
+    negative: r.total ? Math.round((r.negative / r.total) * 100) : 0,
+    neutral: r.total ? Math.round((r.neutral / r.total) * 100) : 0,
+  }));
+  if (chartData.length < 2) return null;
+  return (
+    <div data-testid="sentiment-chart" className="bg-gray-900/50 rounded-xl p-4 border border-gray-800">
+      <p className="text-xs text-gray-400 uppercase tracking-wider mb-3">Sentiment Flow by Round</p>
+      <ResponsiveContainer width="100%" height={160}>
+        <AreaChart data={chartData}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+          <XAxis dataKey="name" tick={{ fill: "#888", fontSize: 11 }} />
+          <YAxis tick={{ fill: "#888", fontSize: 11 }} domain={[0, 100]} />
+          <ReTooltip contentStyle={{ background: "#1a1a2e", border: "1px solid #333", borderRadius: 8 }} />
+          <Area type="monotone" dataKey="positive" stackId="1" stroke="#10b981" fill="#10b981" fillOpacity={0.6} />
+          <Area type="monotone" dataKey="neutral" stackId="1" stroke="#6b7280" fill="#6b7280" fillOpacity={0.4} />
+          <Area type="monotone" dataKey="negative" stackId="1" stroke="#ef4444" fill="#ef4444" fillOpacity={0.6} />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
+};
+
 const Header = ({ onNewSimulation, hasSession }) => (
   <header className="sticky top-0 z-50 w-full border-b border-gray-800 bg-gray-950/80 backdrop-blur-xl">
     <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8">
@@ -1193,15 +1254,16 @@ const AgentStep = ({ sessionId, graph, onComplete }) => {
               data-testid="agent-count-slider"
               type="range"
               min="10"
-              max="50"
+              max="300"
               value={numAgents}
               onChange={(e) => setNumAgents(parseInt(e.target.value))}
               className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
             />
             <div className="flex justify-between text-[10px] text-gray-500 mt-1">
               <span>10</span>
-              <span>30</span>
-              <span>50</span>
+              <span>100</span>
+              <span>200</span>
+              <span>300</span>
             </div>
           </div>
 
@@ -1257,11 +1319,23 @@ const PostCard = ({ post, isReply }) => (
     <div className="flex items-start gap-2">
       <span className="text-xl">{post.agent_emoji}</span>
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-0.5">
+        <div className="flex items-center gap-2 mb-0.5 flex-wrap">
           <span className="font-semibold text-white text-xs">{post.agent_name}</span>
           <span className="text-[10px] text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">R{post.round}</span>
+          {post.is_hub_post && (
+            <span className="text-[10px] bg-purple-500/20 text-purple-400 border border-purple-500/30 px-1.5 py-0.5 rounded-full">HUB</span>
+          )}
+          {post.belief_position != null && (
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+              post.belief_position > 0.15 ? 'bg-green-500/15 text-green-400' :
+              post.belief_position < -0.15 ? 'bg-red-500/15 text-red-400' :
+              'bg-gray-500/15 text-gray-400'
+            }`}>
+              {post.belief_position > 0.15 ? '+ support' : post.belief_position < -0.15 ? '- oppose' : '~ undecided'}
+            </span>
+          )}
           {isReply && (
-            <span className="text-[10px] text-blue-400">↩ {post.reply_to}</span>
+            <span className="text-[10px] text-blue-400">&#8617; {post.reply_to}</span>
           )}
         </div>
         <p className="text-gray-300 text-xs">{post.content}</p>
@@ -1278,6 +1352,7 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
   const [posts, setPosts] = useState([]);
   const [error, setError] = useState(null);
   const [logs, setLogs] = useState([]);
+  const [simMeta, setSimMeta] = useState(null);
   const twitterFeedRef = useRef(null);
   const redditFeedRef = useRef(null);
 
@@ -1311,6 +1386,16 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
           axios.get(`${API}/sessions/${sessionId}/posts`),
         ]);
         setStatus(statusRes.data);
+        
+        // Extract sim meta for new AI enhancements
+        if (statusRes.data.belief_summary || statusRes.data.emotional_summary) {
+          setSimMeta({
+            beliefSummary: statusRes.data.belief_summary,
+            emotionalSummary: statusRes.data.emotional_summary,
+            networkStats: statusRes.data.network_stats,
+            roundNarratives: statusRes.data.round_narratives || [],
+          });
+        }
         
         if (postsRes.data.posts.length > posts.length) {
           const newPosts = postsRes.data.posts.slice(posts.length);
@@ -1442,6 +1527,41 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
         </div>
       </div>
 
+      {/* AI Enhancement Panels */}
+      {simMeta && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          {/* Emotional Temperature */}
+          <div className="bg-gray-900/50 rounded-xl p-3 border border-gray-800">
+            <p className="text-xs text-gray-400 uppercase tracking-wider mb-2">Crowd Emotion</p>
+            <EmotionalTemperatureGauge data={simMeta.emotionalSummary} />
+          </div>
+          {/* Belief Distribution */}
+          {simMeta.beliefSummary && (
+            <div className="bg-gray-900/50 rounded-xl p-3 border border-gray-800">
+              <p className="text-xs text-gray-400 uppercase tracking-wider mb-2">Belief Distribution</p>
+              <div className="flex gap-2 text-xs">
+                <span className="bg-green-500/15 text-green-400 px-2 py-1 rounded">{simMeta.beliefSummary.support}% support</span>
+                <span className="bg-red-500/15 text-red-400 px-2 py-1 rounded">{simMeta.beliefSummary.opposition}% oppose</span>
+                <span className="bg-gray-500/15 text-gray-400 px-2 py-1 rounded">{simMeta.beliefSummary.undecided}% undecided</span>
+              </div>
+            </div>
+          )}
+          {/* Network Stats */}
+          {simMeta.networkStats && (
+            <div className="bg-gray-900/50 rounded-xl p-3 border border-gray-800">
+              <p className="text-xs text-gray-400 uppercase tracking-wider mb-2">Network</p>
+              <div className="flex gap-2 text-xs">
+                <span className="bg-purple-500/15 text-purple-400 px-2 py-1 rounded">{simMeta.networkStats.hub_count} hubs</span>
+                <span className="bg-gray-500/15 text-gray-400 px-2 py-1 rounded">{simMeta.networkStats.peripheral_count} peripheral</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Sentiment Chart */}
+      {posts.length > 5 && <SentimentChart posts={posts} />}
+
       {/* Dual Feed Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Twitter Feed */}
@@ -1549,6 +1669,13 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState(null);
   const [error, setError] = useState(null);
+  const [sessionMeta, setSessionMeta] = useState(null);
+
+  useEffect(() => {
+    axios.get(`${API}/sessions/${sessionId}/simulation-status`)
+      .then(res => setSessionMeta(res.data))
+      .catch(() => {});
+  }, [sessionId]);
 
   const generateReport = async () => {
     setLoading(true);
@@ -1664,8 +1791,51 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
         )}
       </div>
 
+      {/* Simulation Story Arc & AI Insights */}
+      {sessionMeta && (sessionMeta.round_narratives?.length > 0 || sessionMeta.emotional_summary) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+          {/* Story Arc */}
+          {sessionMeta.round_narratives?.length > 0 && (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+              <h3 data-testid="story-arc" className="text-sm font-bold text-white mb-2">Simulation Story Arc</h3>
+              <div className="space-y-1.5">
+                {sessionMeta.round_narratives.map((n, i) => (
+                  <p key={i} className="text-xs text-gray-400 leading-relaxed">
+                    <span className="text-blue-400 font-medium">{n.startsWith("R") || n.startsWith("BREAKING") ? "" : `Round ${i+1}: `}</span>{n}
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
+          {/* Emotional Temperature & Belief Summary */}
+          <div className="space-y-3">
+            {sessionMeta.emotional_summary && (
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                <h3 className="text-sm font-bold text-white mb-2">Final Crowd Emotion</h3>
+                <EmotionalTemperatureGauge data={sessionMeta.emotional_summary} />
+              </div>
+            )}
+            {sessionMeta.belief_summary && (
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                <h3 className="text-sm font-bold text-white mb-2">Final Belief Distribution</h3>
+                <div className="flex gap-2 text-xs flex-wrap">
+                  <span className="bg-green-500/15 text-green-400 px-2 py-1 rounded">{sessionMeta.belief_summary.support}% support</span>
+                  <span className="bg-red-500/15 text-red-400 px-2 py-1 rounded">{sessionMeta.belief_summary.opposition}% oppose</span>
+                  <span className="bg-gray-500/15 text-gray-400 px-2 py-1 rounded">{sessionMeta.belief_summary.undecided}% undecided</span>
+                  {sessionMeta.belief_summary.polarisation != null && (
+                    <span className="bg-yellow-500/15 text-yellow-400 px-2 py-1 rounded">Polarisation: {sessionMeta.belief_summary.polarisation?.toFixed(2)}</span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Sentiment Chart */}
+      {posts?.length > 5 && <SentimentChart posts={posts} />}
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Left Column */}
         <div className="space-y-4">
           {/* Executive Summary */}
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">

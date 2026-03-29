@@ -6,64 +6,66 @@ Build SwarmSim - a web application for AI-powered social prediction simulations.
 ## Architecture
 - **Frontend**: React + Tailwind CSS + Recharts
 - **Backend**: FastAPI (Python) with dual agent architectures
-- **Database**: MongoDB
+- **Database**: MongoDB (collections: sessions, sim_posts, graph_cache, agent_cache)
 - **LLM (Tiered Strategy)**:
-  - **Premium** (deep reasoning): Claude Sonnet 4 (`claude-sonnet-4-20250514`) — intel briefs, graph extraction, reports, agent generation
-  - **Fast** (medium tasks): Claude Haiku 4.5 (`claude-haiku-4-5-20251001`) — critic checks, chat, agent rebalance
-  - **Flash** (bulk generation): Gemini 2.5 Flash (`gemini-2.5-flash`) — simulation posts, replies, narratives
-- **Financial Data**: yfinance (free)
+  - **Premium** (deep reasoning): Claude Sonnet 4 — intel briefs, graph extraction, reports, agent generation
+  - **Fast** (medium tasks): Claude Haiku 4.5 — critic checks, chat, agent rebalance
+  - **Flash** (bulk generation): Gemini 2.5 Flash — simulation posts, replies, narratives, context compression
+- **Financial Data**: yfinance (free, no API key)
 - **News RSS**: Google News RSS via feedparser (free)
+
+### Cost Optimization Architecture (12 Changes)
+1. Three-tier model helpers (call_claude_premium / call_claude_fast / call_gemini_flash)
+2. All LLM calls reassigned to correct cost tier
+3. Batched reply generation (1 call per round, not 1 per reply)
+4. Context compression after round 1 (15-word summary replaces full graph)
+5. Skip narratives for rounds 1-2 (only generate for round >= 3)
+6. MongoDB caching for graphs (24h TTL) and agents (12h TTL)
+7. Static personality templates (reduce agent gen prompt tokens)
+8. Progressive 2-phase report (Phase 1: Haiku fast core → Phase 2: Sonnet deep analysis)
+9. Background critic check (non-blocking, runs 30s after report)
+10. Simulation extend endpoint (add rounds without regenerating graph/agents)
+11. Frontend: cost estimate display, extend button, quality score polling
+12. Tightened defaults: 10 agents (was 20), 3 rounds (was 5), max 10 rounds (was 15)
+
+**Estimated cost per simulation: ~$0.09 (was ~$0.40, ~78% reduction)**
 
 ### Agent Architectures
 ```
-/app/backend/agents/           — AI Enhancement agents
-  critic.py                     — Herd detection, diversity scoring, report quality
-  belief_tracker.py             — Bayesian belief position tracking per agent
-  emotional_contagion.py        — Emotion spread with personality susceptibility
-  network.py                    — Hub/peripheral assignment, Pareto follower counts
-  population.py                 — Three-tier population scaling (clones, silent pop)
+/app/backend/agents/           — AI Enhancement agents (pure Python)
+  critic.py, belief_tracker.py, emotional_contagion.py, network.py, population.py
 
-/app/backend/services/agents/  — Pipeline orchestration agents
-  orchestrator.py               — Coordinates Intel/Graph/Persona/Sim/Report pipeline (accepts call_fns dict)
-  intel_agent.py                — News synthesis + brief generation (max_tokens=800)
-  graph_agent.py                — Entity/relationship extraction (max_tokens=1500)
-  persona_agent.py              — Diverse persona generation (max_tokens=2000) + rebalancing (max_tokens=1000)
-  sim_director.py               — Multi-round simulation (max_tokens=80-150)
-  critic_agent.py               — LLM-based evaluation (max_tokens=200)
-  report_agent.py               — Prediction report with narrative arc (max_tokens=1500)
+/app/backend/services/agents/  — Pipeline orchestration agents (LLM wrappers)
+  orchestrator.py, intel_agent.py, graph_agent.py, persona_agent.py, sim_director.py, critic_agent.py, report_agent.py
 ```
 
-### Simulation Pipeline
-1. Network assignment (10% hubs, Pareto followers)
-2. Belief + emotion initialisation
-3. Per-round: batch post gen (Gemini Flash) → batched replies → belief update → emotion spread → herd check → narrative
-4. Contrarian event injection when herd>0.7
-5. Report generation (Sonnet 4) → pure Python quality scoring
-
-### Cost Optimization (Tiered LLM Strategy)
-- **Before**: All calls used Claude Sonnet 4 (~$0.40/simulation)
-- **After**: Tiered model routing (~$0.09/simulation, ~78% cost reduction)
-- Reply generation batched: 1 LLM call for all replies per round (was N individual calls)
-- max_tokens slashed across all agents
+### Key API Endpoints
+- POST /api/sessions — Create session
+- POST /api/sessions/{id}/fetch-live — Background live intel fetch (202)
+- GET /api/sessions/{id}/live-status — Poll live fetch progress
+- POST /api/sessions/{id}/generate-agents — Background agent generation (202)
+- POST /api/sessions/{id}/configure-population — Three-tier population scaling
+- POST /api/sessions/{id}/simulate — Background simulation (202)
+- POST /api/sessions/{id}/extend — Add rounds to completed simulation (NEW)
+- POST /api/sessions/{id}/generate-report — Progressive 2-phase report
+- POST /api/sessions/{id}/chat — Chat with agents/report
+- GET /api/sessions/{id}/simulation-status — Poll simulation progress
 
 ## What's Implemented (All Complete)
-- Full 5-step wizard UI
-- Live Intelligence Mode (8 web searches + Google News RSS + yfinance)
-- Background tasks for all long-running ops (live-fetch, agents, simulation)
-- Agent limit raised to 300
-- Batch post generation (10 agents per call, using Gemini Flash)
-- Batched reply generation (all replies per round in 1 call)
-- Belief tracking (position + certainty per agent, updated per round)
-- Emotional contagion (valence/arousal, personality-based susceptibility)
-- Network effects (hub/peripheral agents, Pareto follower distribution)
-- Herd detection with automatic contrarian event injection
-- Round narratives for temporal context
-- Quality scoring (0-10) on reports with overconfidence flagging
-- UI: EmotionalTemperatureGauge, SentimentChart, HUB badges, belief indicators, story arc
-- Three-Tier Population Scaling System (Tier 1: LLM Agents, Tier 2: Clones, Tier 3: Silent Population)
-- Tiered LLM Model Strategy (Premium/Fast/Flash)
+- Full 5-step wizard UI (Upload/Live Intel → Graph → Agents → Simulation → Report)
+- Live Intelligence Mode (web searches + Google News RSS + yfinance)
+- Background tasks + polling pattern for all long-running ops
+- 6-agent Orchestrator pipeline
+- AI Enhancements: Bayesian beliefs, emotional contagion, network topology, herd detection
+- Three-Tier Population Scaling (LLM Agents → Clones → Silent Population)
+- 12-point cost optimization (tiered models, caching, batching, compression)
+- Extend simulation endpoint
+- Frontend cost estimate display
+- Progressive 2-phase report generation
+- Background critic quality check
 
 ## Prioritized Backlog
-### P1: Session history, graph zoom/pan
+### P1: Session history (resume previous simulations), graph zoom/pan controls
 ### P2: Entity search/filter, progress %, agent memory persistence
 ### P3: Custom agents, simulation templates, shareable links
+### Refactoring: Split App.js (~2400 lines) into components; consolidate backend agent folders

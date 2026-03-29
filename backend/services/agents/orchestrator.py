@@ -84,7 +84,7 @@ async def run_live_intel_pipeline(session_id: str, topic: str, horizon: str,
 
 
 async def run_agent_generation_pipeline(session_id: str, num_agents: int,
-                                        call_fns: dict, db):
+                                        call_fns: dict, db, social_context: str = ""):
     """Run the Persona Agent pipeline with diversity check.
     Steps: Persona Agent (premium) -> Critic diversity check (pure Python) -> Rebalance (fast)"""
 
@@ -110,6 +110,10 @@ async def run_agent_generation_pipeline(session_id: str, num_agents: int,
         stakeholders = brief.get("stakeholders", [])
         if stakeholders:
             intel_context = f"\nKey Stakeholders from live data: {json.dumps(stakeholders[:5])}"
+
+    # Append social context (from real Reddit/Twitter comments)
+    if social_context:
+        intel_context += social_context
 
     # Step 3: Persona Agent generates agents (PREMIUM — creative persona generation)
     logger.info(f"[Orchestrator] Step 3: Persona Agent ({num_agents} agents)")

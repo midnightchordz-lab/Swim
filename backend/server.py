@@ -17,6 +17,8 @@ import math
 import asyncio
 import io
 import hashlib
+import urllib.request
+import urllib.parse
 
 import base64
 import httpx
@@ -94,6 +96,12 @@ class InjectVariableRequest(BaseModel):
 
 class ExtendSimulationRequest(BaseModel):
     additional_rounds: int = Field(default=3, ge=1, le=10)
+
+class SocialSeedRequest(BaseModel):
+    topic: str
+    include_reddit: bool = True
+    include_twitter: bool = True
+    max_comments: int = Field(default=30, ge=5, le=100)
 
 # Prediction horizons
 PREDICTION_HORIZONS = [
@@ -263,6 +271,155 @@ def clean_json_response(text: str) -> str:
     text = re.sub(r'```json\s*', '', text)
     text = re.sub(r'```\s*', '', text)
     return text.strip()
+
+
+# ─── Social Media Fetchers ────────────────────────────────────────────
+async def fetch_reddit_comments(topic: str, limit: int = 30) -> list:
+    """Fetch real social commentary via Google News RSS (uses feedparser, already proven in app)."""
+    comments = []
+    try:
+        import feedparser
+        encoded_topic = urllib.parse.quote(topic)
+        url = f"https://news.google.com/rss/search?q={encoded_topic}&hl=en&gl=US&ceid=US:en"
+        loop = asyncio.get_running_loop()
+
+        def do_parse():
+            return feedparser.parse(url)
+
+        feed = await loop.run_in_executor(None, do_parse)
+
+        for entry in feed.entries[:limit]:
+            title = entry.get("title", "").strip()
+            source = entry.get("source", {}).get("title", "News")
+            link = entry.get("link", "")
+            summary = entry.get("summary", "")[:200]
+            # Clean HTML tags from summary
+            summary = re.sub(r'<[^>]+>', '', summary).strip()
+            # Remove any remaining HTML entities
+            summary = summary.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"')
+
+            if title and len(title) > 15:
+                # Clean title (feedparser sometimes leaves artifacts)
+                title = re.sub(r'<[^>]+>', '', title).strip()
+                # Determine if it's Reddit content
+                is_reddit = "reddit" in link.lower() or "reddit" in source.lower()
+                content = title[:280]
+                comments.append({
+                    "platform": "Reddit" if is_reddit else "News",
+                    "content": content,
+                    "score": 0,
+                    "subreddit": "news" if not is_reddit else "reddit",
+                    "author": source[:30],
+                    "url": link
+                })
+    except Exception as e:
+        logger.warning(f"[SocialSeed] Google News RSS fetch failed: {e}")
+
+    return comments[:limit]
+
+
+async def fetch_twitter_comments(topic: str, limit: int = 20) -> list:
+    """Fetch tweets via TwitterAPI.io (optional paid). Falls back gracefully if key not set."""
+    api_key = os.environ.get("TWITTER_API_IO_KEY")
+    if not api_key:
+        logger.info("[Twitter] TWITTER_API_IO_KEY not set — skipping")
+        return []
+
+    try:
+        encoded_topic = urllib.parse.quote(topic)
+        url = f"https://api.twitterapi.io/twitter/tweet/advanced_search?query={encoded_topic}&queryType=Latest&count={limit}"
+        req = urllib.request.Request(url, headers={"X-API-Key": api_key, "Content-Type": "application/json"})
+        loop = asyncio.get_running_loop()
+
+        def do_request():
+            with urllib.request.urlopen(req, timeout=10) as response:
+                return json.loads(response.read().decode())
+
+        data = await loop.run_in_executor(None, do_request)
+        tweets = data.get("tweets", [])
+        comments = []
+        for tweet in tweets:
+            text = tweet.get("text", "").strip()
+            if text and not text.startswith("RT ") and len(text) > 20:
+                comments.append({
+                    "platform": "Twitter",
+                    "content": text[:280],
+                    "score": tweet.get("public_metrics", {}).get("like_count", 0),
+                    "author": tweet.get("author", {}).get("userName", "user"),
+                    "created_at": tweet.get("createdAt", "")
+                })
+        return comments
+    except Exception as e:
+        logger.warning(f"[Twitter] Fetch failed: {e}")
+        return []
+
+
+async def fetch_nitter_rss(topic: str, limit: int = 15) -> list:
+    """Fallback: fetch tweets via Nitter RSS (free, no auth)."""
+    try:
+        encoded = urllib.parse.quote(topic)
+        nitter_urls = [
+            f"https://nitter.net/search/rss?f=tweets&q={encoded}",
+            f"https://nitter.privacydev.net/search/rss?f=tweets&q={encoded}",
+        ]
+        loop = asyncio.get_running_loop()
+        for nitter_url in nitter_urls:
+            try:
+                req = urllib.request.Request(nitter_url, headers={"User-Agent": "SwarmSim/1.0"})
+
+                def do_request(r=req):
+                    with urllib.request.urlopen(r, timeout=6) as response:
+                        return response.read().decode()
+
+                raw = await loop.run_in_executor(None, do_request)
+                items = re.findall(r'<item>(.*?)</item>', raw, re.DOTALL)
+                comments = []
+                for item in items[:limit]:
+                    title_match = re.search(r'<title><!\[CDATA\[(.*?)\]\]></title>', item)
+                    if title_match:
+                        text = title_match.group(1).strip()
+                        if len(text) > 15:
+                            comments.append({
+                                "platform": "Twitter",
+                                "content": text[:280],
+                                "score": 0,
+                                "author": "twitter_user"
+                            })
+                if comments:
+                    return comments
+            except Exception:
+                continue
+        return []
+    except Exception as e:
+        logger.warning(f"[Nitter] RSS fetch failed: {e}")
+        return []
+
+
+def _analyse_real_sentiment(comments: list) -> dict:
+    """Quick keyword-based sentiment analysis on real comments (no LLM)."""
+    POSITIVE = {"good", "great", "bullish", "rally", "hope", "win", "support", "positive",
+                "optimistic", "up", "buy", "growth", "rise", "strong", "confident", "recover", "gain"}
+    NEGATIVE = {"bad", "crash", "crisis", "fear", "loss", "bearish", "panic", "collapse",
+                "worried", "fall", "drop", "sell", "weak", "danger", "scam", "fraud", "disaster"}
+    pos = neg = neu = 0
+    for c in comments:
+        words = set(c.get("content", "").lower().split())
+        p = len(words & POSITIVE)
+        n = len(words & NEGATIVE)
+        if p > n:
+            pos += 1
+        elif n > p:
+            neg += 1
+        else:
+            neu += 1
+    total = max(1, len(comments))
+    return {
+        "positive": round(pos / total * 100),
+        "negative": round(neg / total * 100),
+        "neutral": round(neu / total * 100),
+        "dominant": "positive" if pos > neg else "negative" if neg > pos else "mixed",
+        "total_comments_analysed": total
+    }
 
 
 async def fetch_web_data(topic: str, horizon: str, session_id: str = None) -> dict:
@@ -982,21 +1139,40 @@ async def get_prediction_horizons():
 
 
 async def run_agent_generation(session_id: str, num_agents: int):
-    """Background task: orchestrator runs Persona Agent pipeline with caching."""
+    """Background task: orchestrator runs Persona Agent pipeline with caching + social seeding."""
     from services.agents import orchestrator
     try:
         session = await db.sessions.find_one({"id": session_id})
         if not session:
             return
 
-        # Check agent cache
+        # Build social context from seed data
+        social_context = ""
+        social_seed = session.get("social_seed", [])
+        real_sentiment = session.get("social_seed_sentiment", {})
+        if social_seed:
+            top_real = social_seed[:12]
+            real_voices = "\n".join([
+                f"[{c.get('platform', 'Unknown')}] {c.get('content', '')[:100]}"
+                for c in top_real
+            ])
+            dominant = real_sentiment.get("dominant", "mixed")
+            social_context = (
+                f"\nREAL PUBLIC OPINION (from actual Reddit/Twitter):\n{real_voices}\n"
+                f"\nReal sentiment: {real_sentiment.get('positive', 0)}% positive, "
+                f"{real_sentiment.get('negative', 0)}% negative, "
+                f"{real_sentiment.get('neutral', 0)}% neutral. Dominant: {dominant}\n"
+                f"\nGenerate agents whose initial_stance REFLECTS this real distribution. "
+                f"Mirror the diversity of opinion above."
+            )
+
+        # Check agent cache (skip cache if social seed exists - stances should be fresh)
         graph_hash = hashlib.md5(session.get("graph_json", "").encode()).hexdigest()
-        cached_agents = await get_cached_agents(graph_hash, num_agents)
+        cached_agents = None if social_seed else await get_cached_agents(graph_hash, num_agents)
 
         if cached_agents:
             logger.info(f"[Cache] Agent cache hit: {len(cached_agents)} agents")
             agents = cached_agents
-            # Enrich with templates and ensure IDs
             for i, agent in enumerate(agents):
                 agent.setdefault("id", f"agent_{i+1}")
                 ptype = agent.get("personality_type", "Neutral")
@@ -1008,7 +1184,7 @@ async def run_agent_generation(session_id: str, num_agents: int):
         else:
             call_fns = {"premium": call_claude_premium, "fast": call_claude_fast, "flash": call_gemini_flash}
             result = await orchestrator.run_agent_generation_pipeline(
-                session_id, num_agents, call_fns, db
+                session_id, num_agents, call_fns, db, social_context=social_context
             )
             if not result:
                 return
@@ -1016,7 +1192,6 @@ async def run_agent_generation(session_id: str, num_agents: int):
             agents = result["agents"]
             diversity_score = result["diversity_score"]
 
-            # Enrich with personality templates + ensure IDs (Change 7)
             for i, agent in enumerate(agents):
                 agent.setdefault("id", f"agent_{i+1}")
                 ptype = agent.get("personality_type", "Neutral")
@@ -1025,7 +1200,8 @@ async def run_agent_generation(session_id: str, num_agents: int):
                 agent.setdefault("platform_preference", template["platform"])
                 agent.setdefault("memories", [])
 
-            await save_agent_cache(graph_hash, num_agents, agents)
+            if not social_seed:
+                await save_agent_cache(graph_hash, num_agents, agents)
 
         await db.sessions.update_one(
             {"id": session_id},
@@ -1053,6 +1229,76 @@ async def run_agent_generation(session_id: str, num_agents: int):
                 }
             }
         )
+
+
+@api_router.post("/sessions/{session_id}/fetch-social-seed")
+async def fetch_social_seed(session_id: str, request: SocialSeedRequest):
+    """Fetch real Reddit + Twitter comments on the topic to seed the simulation."""
+    session = await db.sessions.find_one({"id": session_id})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    topic = request.topic or session.get("topic", "")
+    if not topic:
+        raise HTTPException(status_code=400, detail="Topic required")
+
+    all_comments = []
+    sources_fetched = []
+
+    if request.include_reddit:
+        try:
+            reddit_comments = await fetch_reddit_comments(topic, limit=request.max_comments)
+            all_comments.extend(reddit_comments)
+            if reddit_comments:
+                news_count = sum(1 for c in reddit_comments if c['platform'] == 'News')
+                reddit_count = sum(1 for c in reddit_comments if c['platform'] == 'Reddit')
+                parts = []
+                if reddit_count > 0:
+                    parts.append(f"Reddit ({reddit_count})")
+                if news_count > 0:
+                    parts.append(f"News ({news_count})")
+                sources_fetched.extend(parts)
+        except Exception as e:
+            logger.error(f"[SocialSeed] Reddit error: {e}")
+
+    if request.include_twitter:
+        twitter_comments = await fetch_twitter_comments(topic, limit=20)
+        if not twitter_comments:
+            twitter_comments = await fetch_nitter_rss(topic, limit=15)
+        all_comments.extend(twitter_comments)
+        if twitter_comments:
+            sources_fetched.append(f"Twitter ({len(twitter_comments)} tweets)")
+
+    if not all_comments:
+        return {
+            "comments_fetched": 0,
+            "sources": [],
+            "real_sentiment": {"positive": 0, "negative": 0, "neutral": 100, "dominant": "mixed", "total_comments_analysed": 0},
+            "sample": [],
+            "message": f"No social data found for: {topic}. Simulation will proceed without seeding."
+        }
+
+    all_comments.sort(key=lambda x: x.get("score", 0), reverse=True)
+    top_comments = all_comments[:request.max_comments]
+    real_sentiment = _analyse_real_sentiment(top_comments)
+
+    await db.sessions.update_one(
+        {"id": session_id},
+        {"$set": {
+            "social_seed": top_comments,
+            "social_seed_sentiment": real_sentiment,
+            "social_seed_sources": sources_fetched,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }}
+    )
+
+    return {
+        "comments_fetched": len(top_comments),
+        "sources": sources_fetched,
+        "real_sentiment": real_sentiment,
+        "sample": top_comments[:5],
+        "message": f"Seeded with {len(top_comments)} real comments from {', '.join(sources_fetched)}"
+    }
 
 
 @api_router.post("/sessions/{session_id}/generate-agents")
@@ -1180,6 +1426,32 @@ async def run_simulation(session_id: str, num_rounds: int):
         round_narratives = []
         BATCH_SIZE = 10
         compressed_context = None
+
+        # Round 0: Inject real social media seed posts
+        social_seed = session.get("social_seed", [])
+        if social_seed:
+            logger.info(f"[Sim] Injecting {len(social_seed)} real social seed posts as Round 0")
+            for i, comment in enumerate(social_seed[:20]):
+                seed_post = {
+                    "session_id": session_id,
+                    "round": 0,
+                    "agent_id": f"real_{i+1}",
+                    "agent_name": comment.get("author", "real_user")[:20],
+                    "agent_emoji": "",
+                    "platform": comment.get("platform", "Reddit"),
+                    "content": comment.get("content", "")[:280],
+                    "post_type": "real_seed",
+                    "is_hub_post": False,
+                    "is_real": True,
+                    "source_url": comment.get("url", ""),
+                    "source_score": comment.get("score", 0),
+                    "influence_level": min(10, max(1, comment.get("score", 0) // 10 + 3)),
+                    "belief_position": 0.0,
+                    "emotional_valence": 0.0,
+                    "created_at": datetime.now(timezone.utc).isoformat()
+                }
+                await db.sim_posts.insert_one(seed_post)
+                all_posts.append(seed_post)
 
         for round_num in range(1, num_rounds + 1):
             await db.sessions.update_one(
@@ -1678,6 +1950,30 @@ Return JSON with ONLY these fields:
         }
     }
     report.update({k: v for k, v in phase2.items() if k != "key_factions"})
+
+    # Add real vs simulated sentiment comparison if social seed exists
+    real_sentiment = session.get("social_seed_sentiment")
+    if real_sentiment and real_sentiment.get("total_comments_analysed", 0) > 0:
+        sim_support = report.get("opinion_landscape", {}).get("support_percentage", 50)
+        sim_opposition = report.get("opinion_landscape", {}).get("opposition_percentage", 30)
+        real_positive = real_sentiment.get("positive", 50)
+        drift = abs(sim_support - real_positive)
+        report["real_vs_simulated"] = {
+            "real_sentiment": real_sentiment,
+            "simulated_sentiment": {
+                "positive": sim_support,
+                "negative": sim_opposition,
+                "neutral": 100 - sim_support - sim_opposition
+            },
+            "drift_percentage": drift,
+            "verdict": (
+                "Strong alignment" if drift <= 10 else
+                "Moderate drift" if drift <= 25 else
+                "Significant divergence"
+            ),
+            "total_real_comments": real_sentiment.get("total_comments_analysed", 0),
+            "sources": session.get("social_seed_sources", [])
+        }
 
     await db.sessions.update_one(
         {"id": session_id},

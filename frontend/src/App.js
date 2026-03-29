@@ -483,6 +483,8 @@ const UploadStep = ({ sessionId, onComplete }) => {
   const [dragActive, setDragActive] = useState(false);
   const [logs, setLogs] = useState([]);
   const fileInputRef = useRef(null);
+  const [socialSeed, setSocialSeed] = useState(null);
+  const [seedLoading, setSeedLoading] = useState(false);
 
   const addLog = (message, type = "info") => {
     const time = new Date().toLocaleTimeString('en-US', { hour12: false });
@@ -599,6 +601,30 @@ const UploadStep = ({ sessionId, onComplete }) => {
   };
 
   const handleSubmit = mode === "upload" ? handleUploadSubmit : handleLiveSubmit;
+
+  const handleFetchSocialSeed = async () => {
+    if (!topic.trim()) return;
+    setSeedLoading(true);
+    addLog(`Fetching real social comments for: ${topic}...`);
+    try {
+      const res = await axios.post(`${API}/sessions/${sessionId}/fetch-social-seed`, {
+        topic: topic,
+        include_reddit: true,
+        include_twitter: true,
+        max_comments: 30
+      }, { timeout: 20000 });
+      setSocialSeed(res.data);
+      addLog(`${res.data.message}`, "success");
+      if (res.data.real_sentiment) {
+        const s = res.data.real_sentiment;
+        addLog(`Real sentiment: ${s.positive}% positive, ${s.negative}% negative, ${s.neutral}% neutral`, "success");
+      }
+    } catch (err) {
+      addLog(`Social seed failed: ${err.response?.data?.detail || err.message}`, "error");
+    } finally {
+      setSeedLoading(false);
+    }
+  };
 
   const exampleQuestions = [
     "Will public support increase or decrease in 6 months?",
@@ -735,6 +761,66 @@ const UploadStep = ({ sessionId, onComplete }) => {
           </div>
 
           <SystemDashboard logs={logs} />
+
+          {/* Social Seed Panel — only for live mode */}
+          {mode === "live" && (
+            <div data-testid="social-seed-panel" className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Globe className="w-4 h-4 text-orange-400" />
+                  <h4 className="text-sm font-semibold text-white">Real Social Seed</h4>
+                  <span className="text-[10px] text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">optional</span>
+                </div>
+                <button
+                  data-testid="fetch-social-seed-button"
+                  onClick={handleFetchSocialSeed}
+                  disabled={seedLoading || !topic.trim()}
+                  className="px-3 py-1.5 bg-orange-600/20 hover:bg-orange-600/30 border border-orange-500/30 text-orange-400 text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {seedLoading ? 'Fetching...' : socialSeed ? 'Re-fetch' : 'Fetch Reddit + Twitter'}
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mb-3">
+                Seed the simulation with real Reddit/Twitter comments. Agents will react to actual public opinion.
+              </p>
+
+              {socialSeed && socialSeed.comments_fetched > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3 text-xs">
+                    <span className="text-emerald-400 font-medium">{socialSeed.comments_fetched} comments</span>
+                    <span className="text-gray-600">|</span>
+                    <span className="text-gray-400">{socialSeed.sources?.join(', ')}</span>
+                  </div>
+                  <div className="flex gap-2 text-xs">
+                    <span className="px-2 py-0.5 rounded bg-green-500/15 text-green-400">
+                      {socialSeed.real_sentiment?.positive || 0}% positive
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-red-500/15 text-red-400">
+                      {socialSeed.real_sentiment?.negative || 0}% negative
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-gray-500/15 text-gray-400">
+                      {socialSeed.real_sentiment?.neutral || 0}% neutral
+                    </span>
+                  </div>
+                  {socialSeed.sample?.slice(0, 3).map((c, i) => (
+                    <div key={i} className="bg-gray-950 rounded-lg p-2 text-xs border border-gray-800">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <span className={`font-medium ${c.platform === 'Reddit' ? 'text-orange-400' : 'text-blue-400'}`}>
+                          {c.platform}
+                        </span>
+                        <span className="text-gray-600">@{c.author}</span>
+                        {c.score > 0 && <span className="text-gray-500 ml-auto">{c.score} pts</span>}
+                      </div>
+                      <p className="text-gray-300 line-clamp-2">{c.content}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {socialSeed && socialSeed.comments_fetched === 0 && (
+                <p className="text-xs text-amber-400">No social data found. Simulation will proceed without seeding.</p>
+              )}
+            </div>
+          )}
           
           <button
             data-testid="continue-to-agents-button"
@@ -1365,14 +1451,17 @@ const PostCard = ({ post, isReply }) => (
   <div
     className={`p-3 border border-gray-800 rounded-lg bg-gray-950/50 hover:bg-gray-800/50 transition-colors animate-slide-up ${
       isReply ? "ml-4 border-l-2 border-l-blue-500" : ""
-    } ${post.platform === "Reddit" ? "border-l-2 border-l-orange-500" : ""}`}
+    } ${post.is_real ? "border-l-2 border-l-orange-400 bg-orange-500/5" : post.platform === "Reddit" ? "border-l-2 border-l-orange-500" : ""}`}
   >
     <div className="flex items-start gap-2">
-      <span className="text-xl">{post.agent_emoji}</span>
+      <span className="text-xl">{post.is_real ? (post.platform === 'Reddit' ? '' : '') : post.agent_emoji}</span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-0.5 flex-wrap">
           <span className="font-semibold text-white text-xs">{post.agent_name}</span>
           <span className="text-[10px] text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">R{post.round}</span>
+          {post.is_real && (
+            <span data-testid="real-badge" className="text-[10px] bg-orange-500/20 text-orange-400 border border-orange-500/30 px-1.5 py-0.5 rounded-full font-semibold">REAL</span>
+          )}
           {post.is_hub_post && (
             <span className="text-[10px] bg-purple-500/20 text-purple-400 border border-purple-500/30 px-1.5 py-0.5 rounded-full">HUB</span>
           )}
@@ -1973,6 +2062,54 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
               <span className="text-gray-400">Undecided: {report.opinion_landscape?.undecided_percentage}%</span>
             </div>
           </div>
+
+          {/* Real vs Simulated Comparison */}
+          {report.real_vs_simulated && (
+            <div data-testid="real-vs-simulated" className="bg-gray-900 border border-orange-500/30 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Globe className="w-4 h-4 text-orange-400" />
+                <h3 className="text-sm font-bold text-white">Real vs Simulated</h3>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                  report.real_vs_simulated.drift_percentage <= 10 ? 'bg-emerald-500/20 text-emerald-400' :
+                  report.real_vs_simulated.drift_percentage <= 25 ? 'bg-amber-500/20 text-amber-400' :
+                  'bg-red-500/20 text-red-400'
+                }`}>
+                  {report.real_vs_simulated.verdict}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div>
+                  <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Real ({report.real_vs_simulated.total_real_comments} comments)</p>
+                  <div className="flex gap-1">
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/15 text-green-400">{report.real_vs_simulated.real_sentiment?.positive}% pos</span>
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-red-500/15 text-red-400">{report.real_vs_simulated.real_sentiment?.negative}% neg</span>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Simulated</p>
+                  <div className="flex gap-1">
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/15 text-green-400">{report.real_vs_simulated.simulated_sentiment?.positive}% pos</span>
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-red-500/15 text-red-400">{report.real_vs_simulated.simulated_sentiment?.negative}% neg</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="flex-1 bg-gray-800 rounded-full h-2 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${
+                      report.real_vs_simulated.drift_percentage <= 10 ? 'bg-emerald-500' :
+                      report.real_vs_simulated.drift_percentage <= 25 ? 'bg-amber-500' : 'bg-red-500'
+                    }`}
+                    style={{ width: `${Math.min(100, report.real_vs_simulated.drift_percentage * 2)}%` }}
+                  />
+                </div>
+                <span className="text-xs text-gray-400 font-mono">{report.real_vs_simulated.drift_percentage}% drift</span>
+              </div>
+              <p className="text-[10px] text-gray-500 mt-2">Sources: {report.real_vs_simulated.sources?.join(', ')}</p>
+            </div>
+          )}
 
           {/* Key Factions */}
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">

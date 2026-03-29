@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import axios from "axios";
 import ForceGraph2D from "react-force-graph-2d";
-import Particles, { initParticlesEngine } from "@tsparticles/react";
-import { loadSlim } from "@tsparticles/slim";
 import {
   Upload, FileText, Users, Play, BarChart3, MessageSquare,
   CheckCircle, Loader2, ArrowRight, Send, AlertCircle,
@@ -30,12 +28,12 @@ const PREDICTION_HORIZONS = [
 
 // Skeleton Component
 const Skeleton = ({ className = "" }) => (
-  <div className={`animate-pulse bg-gray-800 rounded ${className}`} />
+  <div className={`animate-pulse bg-sw-bg3 rounded ${className}`} />
 );
 
 // Skeleton Card Component
 const SkeletonCard = () => (
-  <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-4">
+  <div className="bg-panel border border-sw rounded-xl p-6 space-y-4">
     <div className="flex items-center gap-4">
       <Skeleton className="w-12 h-12 rounded-full" />
       <div className="flex-1 space-y-2">
@@ -55,7 +53,7 @@ const SkeletonCard = () => (
 const SkeletonGrid = ({ count = 4 }) => (
   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
     {Array.from({ length: count }).map((_, i) => (
-      <div key={i} className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
+      <div key={i} className="bg-panel border border-sw rounded-lg p-4 space-y-3">
         <Skeleton className="w-10 h-10 rounded-full mx-auto" />
         <Skeleton className="h-4 w-3/4 mx-auto" />
         <Skeleton className="h-3 w-1/2 mx-auto" />
@@ -64,69 +62,66 @@ const SkeletonGrid = ({ count = 4 }) => (
   </div>
 );
 
-// Particle Background Component
+// Canvas Particle Background
 const ParticleBackground = () => {
-  const [init, setInit] = useState(false);
-
   useEffect(() => {
-    initParticlesEngine(async (engine) => {
-      await loadSlim(engine);
-    }).then(() => {
-      setInit(true);
-    });
+    const canvas = document.getElementById('bg-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    let W, H, particles = [], animId;
+    const CYAN = '0,245,196';
+
+    const resize = () => {
+      W = canvas.width = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+    };
+
+    const init = () => {
+      particles = [];
+      const n = Math.floor((W * H) / 22000);
+      for (let i = 0; i < n; i++) {
+        particles.push({
+          x: Math.random() * W, y: Math.random() * H,
+          vx: (Math.random() - 0.5) * 0.3,
+          vy: (Math.random() - 0.5) * 0.3,
+          r: Math.random() * 1.4 + 0.4,
+          alpha: Math.random() * 0.5 + 0.15
+        });
+      }
+    };
+
+    const draw = () => {
+      ctx.clearRect(0, 0, W, H);
+      for (let i = 0; i < particles.length; i++) {
+        const p = particles[i];
+        p.x += p.vx; p.y += p.vy;
+        if (p.x < 0) p.x = W; if (p.x > W) p.x = 0;
+        if (p.y < 0) p.y = H; if (p.y > H) p.y = 0;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${CYAN},${p.alpha})`;
+        ctx.fill();
+        for (let j = i + 1; j < particles.length; j++) {
+          const q = particles[j];
+          const dx = p.x - q.x, dy = p.y - q.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < 90) {
+            ctx.beginPath();
+            ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y);
+            ctx.strokeStyle = `rgba(${CYAN},${0.07 * (1 - dist / 90)})`;
+            ctx.lineWidth = 0.5; ctx.stroke();
+          }
+        }
+      }
+      animId = requestAnimationFrame(draw);
+    };
+
+    resize(); init(); draw();
+    const onResize = () => { resize(); init(); };
+    window.addEventListener('resize', onResize);
+    return () => { cancelAnimationFrame(animId); window.removeEventListener('resize', onResize); };
   }, []);
-
-  const particlesOptions = useMemo(() => ({
-    background: {
-      color: { value: "transparent" },
-    },
-    fpsLimit: 60,
-    particles: {
-      color: { value: ["#3b82f6", "#8b5cf6", "#06b6d4", "#10b981"] },
-      links: {
-        color: "#3b82f6",
-        distance: 150,
-        enable: true,
-        opacity: 0.1,
-        width: 1,
-      },
-      move: {
-        enable: true,
-        speed: 0.5,
-        direction: "none",
-        random: true,
-        straight: false,
-        outModes: { default: "out" },
-      },
-      number: {
-        density: { enable: true, area: 1000 },
-        value: 60,
-      },
-      opacity: {
-        value: { min: 0.1, max: 0.4 },
-        animation: {
-          enable: true,
-          speed: 1,
-          minimumValue: 0.1,
-        },
-      },
-      shape: { type: "circle" },
-      size: {
-        value: { min: 1, max: 3 },
-      },
-    },
-    detectRetina: true,
-  }), []);
-
-  if (!init) return null;
-
-  return (
-    <Particles
-      id="tsparticles"
-      options={particlesOptions}
-      className="absolute inset-0 pointer-events-none"
-    />
-  );
+  return null;
 };
 
 // Entity type colors
@@ -165,18 +160,18 @@ const EmotionalTemperatureGauge = ({ data }) => {
   if (!data) return null;
   const { state, mean_valence, mean_arousal } = data;
   const stateColors = {
-    PANIC: "bg-red-500/20 text-red-400 border-red-500/40",
-    fear: "bg-orange-500/20 text-orange-400 border-orange-500/40",
-    agitated: "bg-yellow-500/20 text-yellow-400 border-yellow-500/40",
-    calm: "bg-gray-500/20 text-gray-400 border-gray-500/40",
-    optimism: "bg-emerald-500/20 text-emerald-400 border-emerald-500/40",
-    EUPHORIA: "bg-cyan-500/20 text-cyan-400 border-cyan-500/40",
+    PANIC: { bg: 'rgba(255,71,87,0.15)', text: 'var(--red)', border: 'rgba(255,71,87,0.3)' },
+    fear: { bg: 'rgba(249,115,22,0.15)', text: '#fb923c', border: 'rgba(249,115,22,0.3)' },
+    agitated: { bg: 'rgba(245,166,35,0.15)', text: 'var(--amber)', border: 'rgba(245,166,35,0.3)' },
+    calm: { bg: 'rgba(107,114,128,0.15)', text: 'var(--text2)', border: 'rgba(107,114,128,0.3)' },
+    optimism: { bg: 'rgba(0,245,196,0.12)', text: 'var(--cyan)', border: 'rgba(0,245,196,0.25)' },
+    EUPHORIA: { bg: 'rgba(0,245,196,0.2)', text: 'var(--cyan)', border: 'rgba(0,245,196,0.4)' },
   };
-  const colorClass = stateColors[state] || stateColors.calm;
+  const colors = stateColors[state] || stateColors.calm;
   return (
-    <div data-testid="emotional-temperature" className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border ${colorClass}`}>
+    <div data-testid="emotional-temperature" className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold" style={{background:colors.bg,color:colors.text,border:`1px solid ${colors.border}`}}>
       <span className="uppercase tracking-wider">{state}</span>
-      <span className="opacity-70">V:{mean_valence > 0 ? "+" : ""}{mean_valence?.toFixed(2)} A:{mean_arousal?.toFixed(2)}</span>
+      <span style={{opacity:0.7}}>V:{mean_valence > 0 ? "+" : ""}{mean_valence?.toFixed(2)} A:{mean_arousal?.toFixed(2)}</span>
     </div>
   );
 };
@@ -201,17 +196,17 @@ const SentimentChart = ({ posts }) => {
   }));
   if (chartData.length < 2) return null;
   return (
-    <div data-testid="sentiment-chart" className="bg-gray-900/50 rounded-xl p-4 border border-gray-800">
-      <p className="text-xs text-gray-400 uppercase tracking-wider mb-3">Sentiment Flow by Round</p>
+    <div data-testid="sentiment-chart" className="rounded-xl p-4" style={{background:'var(--panel)',border:'1px solid var(--border)'}}>
+      <p className="text-xs uppercase tracking-wider mb-3" style={{color:'var(--text3)'}}>Sentiment Flow by Round</p>
       <ResponsiveContainer width="100%" height={160}>
         <AreaChart data={chartData}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-          <XAxis dataKey="name" tick={{ fill: "#888", fontSize: 11 }} />
-          <YAxis tick={{ fill: "#888", fontSize: 11 }} domain={[0, 100]} />
-          <ReTooltip contentStyle={{ background: "#1a1a2e", border: "1px solid #333", borderRadius: 8 }} />
-          <Area type="monotone" dataKey="positive" stackId="1" stroke="#10b981" fill="#10b981" fillOpacity={0.6} />
-          <Area type="monotone" dataKey="neutral" stackId="1" stroke="#6b7280" fill="#6b7280" fillOpacity={0.4} />
-          <Area type="monotone" dataKey="negative" stackId="1" stroke="#ef4444" fill="#ef4444" fillOpacity={0.6} />
+          <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,245,196,0.08)" />
+          <XAxis dataKey="name" tick={{ fill: "#8892a4", fontSize: 11 }} />
+          <YAxis tick={{ fill: "#8892a4", fontSize: 11 }} domain={[0, 100]} />
+          <ReTooltip contentStyle={{ background: "#0b0f1a", border: "1px solid rgba(0,245,196,0.12)", borderRadius: 8 }} />
+          <Area type="monotone" dataKey="positive" stackId="1" stroke="#00f5c4" fill="#00f5c4" fillOpacity={0.5} />
+          <Area type="monotone" dataKey="neutral" stackId="1" stroke="#4a5568" fill="#4a5568" fillOpacity={0.4} />
+          <Area type="monotone" dataKey="negative" stackId="1" stroke="#ff4757" fill="#ff4757" fillOpacity={0.5} />
         </AreaChart>
       </ResponsiveContainer>
     </div>
@@ -219,81 +214,57 @@ const SentimentChart = ({ posts }) => {
 };
 
 const Header = ({ onNewSimulation, hasSession }) => (
-  <header className="sticky top-0 z-50 w-full border-b border-gray-800 bg-gray-950/80 backdrop-blur-xl">
-    <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8">
-      <div className="flex items-center justify-between h-14">
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">🐟</span>
-          <div>
-            <h1 className="text-lg font-black tracking-tighter text-white">SwarmSim</h1>
-            <p className="text-[10px] text-gray-500 tracking-wide">Swarm Intelligence Prediction Engine</p>
-          </div>
-        </div>
-        {hasSession && (
-          <button
-            data-testid="new-simulation-button"
-            onClick={onNewSimulation}
-            className="flex items-center gap-2 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-sm text-gray-300 hover:text-white transition-colors"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>New Simulation</span>
-          </button>
-        )}
+  <header className="app-header">
+    <div className="logo-wrap">
+      <div className="logo-icon-box">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#00f5c4" strokeWidth="1.5">
+          <circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8" opacity="0.3"/>
+          <path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
+        </svg>
       </div>
+      <div>
+        <div className="logo-name">SwarmSim</div>
+        <div className="logo-tagline">Swarm Intelligence Engine</div>
+      </div>
+    </div>
+    <div style={{display:'flex',gap:'12px',alignItems:'center'}}>
+      <span className="badge-live" data-testid="system-status">System Online</span>
+      {hasSession && (
+        <button
+          data-testid="new-simulation-button"
+          onClick={onNewSimulation}
+          className="btn-ghost"
+        >
+          + New Simulation
+        </button>
+      )}
     </div>
   </header>
 );
 
 // Step Indicator Component
 const StepIndicator = ({ currentStep, completedSteps, onStepClick }) => (
-  <div className="w-full max-w-3xl mx-auto mb-6 px-4">
-    <div className="flex items-center justify-between">
+  <div className="steps-bar">
+    <div className="steps">
       {STEPS.map((step, index) => {
         const isActive = currentStep === step.id;
         const isCompleted = completedSteps.includes(step.id);
         const isClickable = isCompleted || step.id <= Math.max(...completedSteps, 1);
+        const stepNum = String(step.id).padStart(2, '0');
         
         return (
-          <React.Fragment key={step.id}>
-            <button
-              data-testid={`step-${step.id}-indicator`}
-              onClick={() => isClickable && onStepClick(step.id)}
-              disabled={!isClickable}
-              className={`flex flex-col items-center gap-1.5 transition-all duration-200 ${
-                isClickable ? "cursor-pointer" : "cursor-not-allowed opacity-50"
-              }`}
-            >
-              <div
-                className={`w-9 h-9 rounded-full flex items-center justify-center border-2 transition-all ${
-                  isActive
-                    ? "border-blue-500 bg-blue-500/20 text-blue-400"
-                    : isCompleted
-                    ? "border-emerald-500 bg-emerald-500/20 text-emerald-400"
-                    : "border-gray-700 bg-gray-900 text-gray-500"
-                }`}
-              >
-                {isCompleted && !isActive ? (
-                  <CheckCircle className="w-4 h-4" />
-                ) : (
-                  <span className="text-base">{step.emoji}</span>
-                )}
-              </div>
-              <span
-                className={`text-[10px] font-medium hidden sm:block ${
-                  isActive ? "text-blue-400" : isCompleted ? "text-emerald-400" : "text-gray-600"
-                }`}
-              >
-                {step.name}
-              </span>
-            </button>
-            {index < STEPS.length - 1 && (
-              <div
-                className={`flex-1 h-px mx-2 transition-colors ${
-                  completedSteps.includes(step.id) ? "bg-emerald-500/50" : "bg-gray-800"
-                }`}
-              />
-            )}
-          </React.Fragment>
+          <div
+            key={step.id}
+            data-testid={`step-${step.id}-indicator`}
+            className={`step ${isCompleted && !isActive ? 'done' : ''} ${isActive ? 'active' : ''}`}
+            onClick={() => isClickable && onStepClick(step.id)}
+            style={{ cursor: isClickable ? 'pointer' : 'default', opacity: isClickable ? 1 : 0.4 }}
+          >
+            <div className="step-dot">
+              {isCompleted && !isActive ? '✓' : stepNum}
+            </div>
+            <div className="step-name">{step.name}</div>
+          </div>
         );
       })}
     </div>
@@ -360,22 +331,25 @@ const KnowledgeGraph = ({ graph, onRefresh }) => {
   }, [graph]);
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden h-full flex flex-col">
-      <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between bg-gray-950">
-        <h3 className="text-sm font-semibold text-white">Graph Relationship Visualization</h3>
+    <div className="border rounded-xl overflow-hidden h-full flex flex-col" style={{background:'var(--bg2)',borderColor:'var(--border)'}}>
+      <div className="px-4 py-3 border-b flex items-center justify-between" style={{borderColor:'var(--border)',background:'var(--bg)'}}>
+        <h3 className="text-sm font-semibold" style={{color:'var(--text)'}}>Graph Relationship Visualization</h3>
         <div className="flex items-center gap-2">
           <button
             onClick={onRefresh}
-            className="p-1.5 hover:bg-gray-800 rounded transition-colors text-gray-400 hover:text-white"
+            className="p-1.5 rounded transition-colors"
+            style={{color:'var(--text2)'}}
             title="Refresh"
           >
             <RefreshCw className="w-4 h-4" />
           </button>
           <button
             onClick={() => setShowLabels(!showLabels)}
-            className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors ${
-              showLabels ? "bg-blue-500/20 text-blue-400" : "bg-gray-800 text-gray-400"
-            }`}
+            className="flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors"
+            style={{
+              background: showLabels ? 'var(--cyan-dim)' : 'var(--bg3)',
+              color: showLabels ? 'var(--cyan)' : 'var(--text2)'
+            }}
           >
             {showLabels ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
             <span>Edge Labels</span>
@@ -383,38 +357,34 @@ const KnowledgeGraph = ({ graph, onRefresh }) => {
         </div>
       </div>
       
-      <div ref={containerRef} className="flex-1 bg-gray-950 relative">
+      <div ref={containerRef} className="flex-1 relative" style={{background:'var(--bg)'}}>
         <ForceGraph2D
           ref={graphRef}
           graphData={graphData}
           width={dimensions.width}
           height={dimensions.height}
-          backgroundColor="#030712"
+          backgroundColor="#06080f"
           nodeLabel={node => `${node.name}\n${node.description || ''}`}
           nodeColor={node => node.color}
           nodeRelSize={6}
-          linkColor={() => "rgba(100, 116, 139, 0.3)"}
+          linkColor={() => "rgba(0, 245, 196, 0.15)"}
           linkWidth={link => Math.max(1, link.weight * 3)}
           linkDirectionalParticles={2}
           linkDirectionalParticleWidth={2}
-          linkDirectionalParticleColor={() => "rgba(59, 130, 246, 0.5)"}
+          linkDirectionalParticleColor={() => "rgba(0, 245, 196, 0.4)"}
           linkLabel={showLabels ? link => link.label : undefined}
           nodeCanvasObject={(node, ctx, globalScale) => {
             const label = node.name;
             const fontSize = 10 / globalScale;
             ctx.font = `${fontSize}px Sans-Serif`;
-            
-            // Node circle
             ctx.beginPath();
             ctx.arc(node.x, node.y, 6, 0, 2 * Math.PI);
             ctx.fillStyle = node.color;
             ctx.fill();
-            
-            // Label
             if (globalScale > 0.5) {
               ctx.textAlign = "center";
               ctx.textBaseline = "middle";
-              ctx.fillStyle = "#fff";
+              ctx.fillStyle = "#e8edf8";
               ctx.fillText(label, node.x, node.y + 12);
             }
           }}
@@ -424,14 +394,14 @@ const KnowledgeGraph = ({ graph, onRefresh }) => {
       </div>
 
       {/* Entity Type Legend */}
-      <div className="px-4 py-3 border-t border-gray-800 bg-gray-950">
-        <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-2">Entity Types</p>
+      <div className="px-4 py-3 border-t" style={{borderColor:'var(--border)',background:'var(--bg)'}}>
+        <p className="text-[10px] uppercase tracking-wider mb-2" style={{color:'var(--text3)'}}>Entity Types</p>
         <div className="flex flex-wrap gap-3">
           {entityTypes.map(({ type, color, count }) => (
             <div key={type} className="flex items-center gap-1.5">
               <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
-              <span className="text-xs text-gray-400 capitalize">{type}</span>
-              <span className="text-[10px] text-gray-600">({count})</span>
+              <span className="text-xs capitalize" style={{color:'var(--text2)'}}>{type}</span>
+              <span className="text-[10px]" style={{color:'var(--text3)'}}>({count})</span>
             </div>
           ))}
         </div>
@@ -449,22 +419,16 @@ const SystemDashboard = ({ logs }) => {
   }, [logs]);
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
-      <div className="px-3 py-2 border-b border-gray-800 flex items-center gap-2 bg-gray-950">
-        <Terminal className="w-3.5 h-3.5 text-gray-400" />
-        <span className="text-xs font-medium text-gray-400">System Dashboard</span>
-      </div>
-      <div className="h-24 overflow-y-auto p-2 font-mono text-[10px] text-gray-400 bg-gray-950">
-        {logs.map((log, i) => (
-          <div key={i} className="flex gap-2">
-            <span className="text-gray-600">{log.time}</span>
-            <span className={log.type === "success" ? "text-emerald-400" : log.type === "error" ? "text-red-400" : "text-gray-400"}>
-              {log.message}
-            </span>
-          </div>
-        ))}
-        <div ref={logsEndRef} />
-      </div>
+    <div className="terminal-box">
+      {logs.map((log, i) => (
+        <div key={i} style={{display:'flex',gap:'8px'}}>
+          <span className="t-dm">{log.time}</span>
+          <span className={log.type === "success" ? "t-gn" : log.type === "error" ? "t-rd" : "t-dm"}>
+            {log.message}
+          </span>
+        </div>
+      ))}
+      <div ref={logsEndRef} />
     </div>
   );
 };
@@ -649,35 +613,33 @@ const UploadStep = ({ sessionId, onComplete }) => {
 
         {/* Right: Summary & Actions */}
         <div className="space-y-4">
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+          <div className="glass-card" style={{padding:'20px'}}>
             <div className="flex items-center gap-3 mb-4">
               {mode === "live" ? (
-                <Radio className="w-5 h-5 text-green-400 animate-pulse" />
+                <Radio className="w-5 h-5 animate-pulse" style={{color:'var(--cyan)'}} />
               ) : (
-                <CheckCircle className="w-5 h-5 text-emerald-400" />
+                <CheckCircle className="w-5 h-5" style={{color:'var(--cyan)'}} />
               )}
-              <h3 className="text-lg font-bold text-white">
+              <h3 className="text-lg font-bold" style={{color:'var(--text)'}}>
                 {mode === "live" ? "Live Intelligence Brief" : "Knowledge Graph Extracted"}
               </h3>
               {mode === "live" && (
-                <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-[10px] rounded-full border border-green-500/30 animate-pulse">
-                  LIVE
-                </span>
+                <span className="badge-live" style={{fontSize:'10px',padding:'3px 8px'}}>LIVE</span>
               )}
             </div>
             
-            <p className="text-gray-300 text-sm mb-4">{graph.summary}</p>
+            <p className="text-sm mb-4" style={{color:'var(--text2)'}}>{graph.summary}</p>
             
             {/* Intel Brief Details for Live Mode */}
             {mode === "live" && intelBrief && (
               <div className="mb-4 space-y-3">
                 {intelBrief.key_developments && (
                   <div>
-                    <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Key Developments</p>
+                    <p className="text-xs uppercase tracking-wider mb-1" style={{color:'var(--text3)'}}>Key Developments</p>
                     <ul className="space-y-1">
                       {intelBrief.key_developments.slice(0, 3).map((dev, i) => (
-                        <li key={i} className="text-xs text-gray-300 flex items-start gap-2">
-                          <span className="text-green-400">•</span> {dev}
+                        <li key={i} className="text-xs flex items-start gap-2" style={{color:'var(--text2)'}}>
+                          <span style={{color:'var(--cyan)'}}>•</span> {dev}
                         </li>
                       ))}
                     </ul>
@@ -686,10 +648,10 @@ const UploadStep = ({ sessionId, onComplete }) => {
                 {intelBrief.data_points && intelBrief.data_points.length > 0 && (
                   <div className="flex flex-wrap gap-2">
                     {intelBrief.data_points.slice(0, 3).map((dp, i) => (
-                      <div key={i} className="px-2 py-1 bg-gray-950 rounded border border-gray-800">
-                        <span className="text-[10px] text-gray-500">{dp.metric}:</span>
-                        <span className="text-xs text-white ml-1">{dp.value}</span>
-                        <span className={`text-[10px] ml-1 ${dp.trend === 'up' ? 'text-green-400' : dp.trend === 'down' ? 'text-red-400' : 'text-gray-400'}`}>
+                      <div key={i} className="px-2 py-1 rounded" style={{background:'var(--bg3)',border:'1px solid var(--border)'}}>
+                        <span className="text-[10px]" style={{color:'var(--text3)'}}>{dp.metric}:</span>
+                        <span className="text-xs ml-1" style={{color:'var(--text)'}}>{dp.value}</span>
+                        <span className={`text-[10px] ml-1`} style={{color: dp.trend === 'up' ? 'var(--cyan)' : dp.trend === 'down' ? 'var(--red)' : 'var(--text2)'}}>
                           {dp.trend === 'up' ? '↑' : dp.trend === 'down' ? '↓' : '→'}
                         </span>
                       </div>
@@ -701,18 +663,21 @@ const UploadStep = ({ sessionId, onComplete }) => {
 
             {/* Verified Market Data for Live Mode */}
             {mode === "live" && intelBrief?.verified_market_data && intelBrief.verified_market_data.length > 0 && (
-              <div data-testid="verified-market-data" className="mb-4 bg-gray-950 rounded-xl p-3 border border-emerald-500/30">
-                <p className="text-xs text-emerald-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+              <div data-testid="verified-market-data" className="mb-4 rounded-xl p-3" style={{background:'var(--bg3)',border:'1px solid rgba(0,245,196,0.2)'}}>
+                <p className="text-xs uppercase tracking-wider mb-2 flex items-center gap-1.5" style={{color:'var(--cyan)'}}>
                   <CheckCircle className="w-3 h-3" /> Verified Real-Time Data
                 </p>
                 <div className="space-y-2">
                   {intelBrief.verified_market_data.map((md, i) => (
                     <div key={i} className="flex items-center justify-between">
-                      <span className="text-sm text-white font-medium">{md.name}</span>
+                      <span className="text-sm font-medium" style={{color:'var(--text)'}}>{md.name}</span>
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-bold text-white mono">{md.currency} {md.price?.toLocaleString()}</span>
+                        <span className="text-sm font-bold mono" style={{color:'var(--text)'}}>{md.currency} {md.price?.toLocaleString()}</span>
                         {md.change_pct != null && (
-                          <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${md.change_pct >= 0 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                          <span className="text-xs font-medium px-1.5 py-0.5 rounded" style={{
+                            background: md.change_pct >= 0 ? 'rgba(0,245,196,0.15)' : 'rgba(255,71,87,0.15)',
+                            color: md.change_pct >= 0 ? 'var(--cyan)' : 'var(--red)'
+                          }}>
                             {md.change_pct >= 0 ? '+' : ''}{md.change_pct}%
                           </span>
                         )}
@@ -725,36 +690,36 @@ const UploadStep = ({ sessionId, onComplete }) => {
             
             <div className="flex flex-wrap gap-2 mb-5">
               {graph.themes?.map((theme, i) => (
-                <span key={i} className="px-2.5 py-1 bg-blue-500/10 text-blue-400 text-xs rounded-full border border-blue-500/20">
+                <span key={i} className="px-2.5 py-1 text-xs rounded-full" style={{background:'var(--cyan-dim)',color:'var(--cyan)',border:'1px solid rgba(0,245,196,0.2)'}}>
                   {theme}
                 </span>
               ))}
             </div>
             
             <div className="grid grid-cols-2 gap-3">
-              <div className="bg-gray-950 rounded-lg p-3 border border-gray-800">
-                <div className="text-2xl font-bold text-blue-400 mono">{graph.entities?.length || 0}</div>
-                <div className="text-xs text-gray-400">Entities</div>
+              <div className="rounded-lg p-3" style={{background:'var(--bg3)',border:'1px solid var(--border)'}}>
+                <div className="text-2xl font-bold mono" style={{color:'var(--cyan)'}}>{graph.entities?.length || 0}</div>
+                <div className="text-xs" style={{color:'var(--text2)'}}>Entities</div>
               </div>
-              <div className="bg-gray-950 rounded-lg p-3 border border-gray-800">
-                <div className="text-2xl font-bold text-emerald-400 mono">{graph.relationships?.length || 0}</div>
-                <div className="text-xs text-gray-400">Relationships</div>
+              <div className="rounded-lg p-3" style={{background:'var(--bg3)',border:'1px solid var(--border)'}}>
+                <div className="text-2xl font-bold mono" style={{color:'var(--violet)'}}>{graph.relationships?.length || 0}</div>
+                <div className="text-xs" style={{color:'var(--text2)'}}>Relationships</div>
               </div>
             </div>
           </div>
 
           {/* Entity Preview */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 max-h-48 overflow-y-auto">
-            <h4 className="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-wider">Key Entities</h4>
-            <div className="space-y-2">
+          <div className="glass-card" style={{padding:'16px'}}>
+            <h4 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{color:'var(--text2)'}}>Key Entities</h4>
+            <div className="space-y-2 max-h-48 overflow-y-auto">
               {graph.entities?.slice(0, 6).map((entity, i) => (
-                <div key={i} className="flex items-center gap-2 p-2 bg-gray-950 rounded border border-gray-800">
+                <div key={i} className="flex items-center gap-2 p-2 rounded" style={{background:'var(--bg3)',border:'1px solid var(--border)'}}>
                   <div 
                     className="w-2 h-2 rounded-full flex-shrink-0" 
                     style={{ backgroundColor: ENTITY_COLORS[entity.type] || ENTITY_COLORS.default }}
                   />
-                  <span className="text-white text-sm font-medium truncate">{entity.name}</span>
-                  <span className="text-[10px] text-gray-500 capitalize ml-auto">{entity.type}</span>
+                  <span className="text-sm font-medium truncate" style={{color:'var(--text)'}}>{entity.name}</span>
+                  <span className="text-[10px] capitalize ml-auto" style={{color:'var(--text3)'}}>{entity.type}</span>
                 </div>
               ))}
             </div>
@@ -764,71 +729,71 @@ const UploadStep = ({ sessionId, onComplete }) => {
 
           {/* Social Seed Panel — only for live mode */}
           {mode === "live" && (
-            <div data-testid="social-seed-panel" className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+            <div data-testid="social-seed-panel" className="glass-card" style={{padding:'16px'}}>
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
-                  <Globe className="w-4 h-4 text-orange-400" />
-                  <h4 className="text-sm font-semibold text-white">Real Social Seed</h4>
-                  <span className="text-[10px] text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">optional</span>
+                  <Globe className="w-4 h-4" style={{color:'var(--amber)'}} />
+                  <h4 className="text-sm font-semibold" style={{color:'var(--text)'}}>Real Social Seed</h4>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded" style={{color:'var(--text3)',background:'var(--bg3)'}}>optional</span>
                 </div>
                 <button
                   data-testid="fetch-social-seed-button"
                   onClick={handleFetchSocialSeed}
                   disabled={seedLoading || !topic.trim()}
-                  className="px-3 py-1.5 bg-orange-600/20 hover:bg-orange-600/30 border border-orange-500/30 text-orange-400 text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
+                  className="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
+                  style={{background:'rgba(245,166,35,0.15)',border:'1px solid rgba(245,166,35,0.3)',color:'var(--amber)'}}
                 >
                   {seedLoading ? 'Fetching...' : socialSeed ? 'Re-fetch' : 'Fetch Reddit + Twitter'}
                 </button>
               </div>
-              <p className="text-xs text-gray-500 mb-3">
+              <p className="text-xs mb-3" style={{color:'var(--text3)'}}>
                 Seed the simulation with real Reddit/Twitter comments. Agents will react to actual public opinion.
               </p>
 
               {socialSeed && socialSeed.comments_fetched > 0 && (
                 <div className="space-y-2">
                   <div className="flex items-center gap-3 text-xs">
-                    <span className="text-emerald-400 font-medium">{socialSeed.comments_fetched} comments</span>
-                    <span className="text-gray-600">|</span>
-                    <span className="text-gray-400">{socialSeed.sources?.join(', ')}</span>
+                    <span className="font-medium" style={{color:'var(--cyan)'}}>{socialSeed.comments_fetched} comments</span>
+                    <span style={{color:'var(--text3)'}}>|</span>
+                    <span style={{color:'var(--text2)'}}>{socialSeed.sources?.join(', ')}</span>
                   </div>
                   <div className="flex gap-2 text-xs">
-                    <span className="px-2 py-0.5 rounded bg-green-500/15 text-green-400">
+                    <span className="px-2 py-0.5 rounded" style={{background:'rgba(16,185,129,0.15)',color:'#34d399'}}>
                       {socialSeed.real_sentiment?.positive || 0}% positive
                     </span>
-                    <span className="px-2 py-0.5 rounded bg-red-500/15 text-red-400">
+                    <span className="px-2 py-0.5 rounded" style={{background:'rgba(255,71,87,0.15)',color:'var(--red)'}}>
                       {socialSeed.real_sentiment?.negative || 0}% negative
                     </span>
-                    <span className="px-2 py-0.5 rounded bg-gray-500/15 text-gray-400">
+                    <span className="px-2 py-0.5 rounded" style={{background:'rgba(107,114,128,0.15)',color:'var(--text2)'}}>
                       {socialSeed.real_sentiment?.neutral || 0}% neutral
                     </span>
                   </div>
                   {socialSeed.sample?.slice(0, 3).map((c, i) => (
-                    <div key={i} className="bg-gray-950 rounded-lg p-2 text-xs border border-gray-800">
+                    <div key={i} className="rounded-lg p-2 text-xs" style={{background:'var(--bg3)',border:'1px solid var(--border)'}}>
                       <div className="flex items-center gap-1.5 mb-1">
-                        <span className={`font-medium ${c.platform === 'Reddit' ? 'text-orange-400' : 'text-blue-400'}`}>
+                        <span className="font-medium" style={{color: c.platform === 'Reddit' ? '#fb923c' : '#60a5fa'}}>
                           {c.platform}
                         </span>
-                        <span className="text-gray-600">@{c.author}</span>
-                        {c.score > 0 && <span className="text-gray-500 ml-auto">{c.score} pts</span>}
+                        <span style={{color:'var(--text3)'}}>@{c.author}</span>
+                        {c.score > 0 && <span className="ml-auto" style={{color:'var(--text3)'}}>{c.score} pts</span>}
                       </div>
-                      <p className="text-gray-300 line-clamp-2">{c.content}</p>
+                      <p className="line-clamp-2" style={{color:'var(--text2)'}}>{c.content}</p>
                     </div>
                   ))}
                 </div>
               )}
               {socialSeed && socialSeed.comments_fetched === 0 && (
-                <p className="text-xs text-amber-400">No social data found. Simulation will proceed without seeding.</p>
+                <p className="text-xs" style={{color:'var(--amber)'}}>No social data found. Simulation will proceed without seeding.</p>
               )}
             </div>
           )}
           
           <button
             data-testid="continue-to-agents-button"
+            className="btn-primary"
             onClick={() => onComplete(graph)}
-            className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg flex items-center justify-center gap-2 transition-colors"
           >
-            Continue → Generate Agents
-            <ArrowRight className="w-4 h-4" />
+            Continue — Generate Agents <ArrowRight className="w-4 h-4" />
           </button>
         </div>
       </div>
@@ -836,311 +801,308 @@ const UploadStep = ({ sessionId, onComplete }) => {
   }
 
   return (
-    <div className="max-w-3xl mx-auto">
-      {/* Hero Section */}
-      <div className="text-center mb-8 relative">
-        {/* Gradient orbs background */}
-        <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute -top-20 -left-20 w-80 h-80 bg-blue-500/30 rounded-full blur-3xl animate-pulse" />
-          <div className="absolute -top-10 -right-20 w-72 h-72 bg-purple-500/30 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
-          <div className="absolute top-10 left-1/2 w-56 h-56 bg-cyan-500/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '2s' }} />
-        </div>
-        
-        <div className="relative">
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-blue-500/10 to-purple-500/10 border border-blue-500/20 rounded-full mb-4">
-            <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
-            <span className="text-xs font-medium text-blue-300">AI-Powered Prediction Engine</span>
-          </div>
-          
-          <h2 className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white via-blue-100 to-purple-200 mb-3">
-            {mode === "live" ? "Live Intelligence Mode" : "Upload Your Seed Document"}
-          </h2>
-          <p className="text-gray-400 text-base max-w-lg mx-auto">
-            {mode === "live" 
-              ? "Fetch real-time data from the web and simulate market reactions."
-              : "Feed the swarm with data. Our AI agents will analyze, debate, and predict outcomes."
-            }
-          </p>
-        </div>
-      </div>
-
-      {/* Mode Toggle */}
-      <div className="flex justify-center mb-6">
-        <div className="inline-flex bg-gray-900 border border-gray-800 rounded-xl p-1">
-          <button
-            data-testid="mode-upload"
-            onClick={() => setMode("upload")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              mode === "upload"
-                ? "bg-blue-600 text-white shadow-lg"
-                : "text-gray-400 hover:text-white"
-            }`}
-          >
-            <Upload className="w-4 h-4" />
-            Document Upload
-          </button>
-          <button
-            data-testid="mode-live"
-            onClick={() => setMode("live")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              mode === "live"
-                ? "bg-gradient-to-r from-green-600 to-emerald-600 text-white shadow-lg"
-                : "text-gray-400 hover:text-white"
-            }`}
-          >
-            <Radio className="w-4 h-4" />
-            Live Intelligence
-            <span className="px-1.5 py-0.5 bg-green-500/20 text-green-400 text-[10px] rounded-full">NEW</span>
-          </button>
-        </div>
-      </div>
-
-      {error && (
-        <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg flex items-center gap-3 text-red-400 text-sm">
-          <AlertCircle className="w-4 h-4 flex-shrink-0" />
-          <span>{error}</span>
-        </div>
-      )}
-
-      {/* Main Card */}
-      <div className="relative group">
-        <div className={`absolute -inset-0.5 bg-gradient-to-r ${mode === "live" ? "from-green-500 via-emerald-500 to-cyan-500" : "from-blue-500 via-purple-500 to-emerald-500"} rounded-2xl blur opacity-20 group-hover:opacity-40 transition duration-500`} />
-        <div className="relative bg-gray-900/90 backdrop-blur-xl border border-gray-800 rounded-2xl p-8">
-          
-          {mode === "upload" ? (
-            /* Upload Mode Content */
-            <>
-              <div
-                data-testid="upload-dropzone"
-                onClick={() => fileInputRef.current?.click()}
-                onDragEnter={handleDrag}
-                onDragLeave={handleDrag}
-                onDragOver={handleDrag}
-                onDrop={handleDrop}
-                className={`relative border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-all duration-300 ${
-                  dragActive
-                    ? "border-blue-400 bg-blue-500/10 scale-[1.02]"
-                    : file
-                    ? "border-emerald-400 bg-emerald-500/10"
-                    : "border-gray-600 hover:border-blue-400 bg-gray-950/50 hover:bg-blue-500/5"
-                }`}
-              >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".pdf,.txt,.docx,.md,.png,.jpg,.jpeg,.webp,.gif"
-                  onChange={(e) => {
-                    if (e.target.files?.[0]) {
-                      setFile(e.target.files[0]);
-                      addLog(`File selected: ${e.target.files[0].name}`, "success");
-                    }
-                  }}
-                  className="hidden"
-                />
-                {file ? (
-                  <div className="flex flex-col items-center gap-3">
-                    <div className="w-16 h-16 rounded-full bg-emerald-500/20 flex items-center justify-center">
-                      <FileText className="w-8 h-8 text-emerald-400" />
-                    </div>
-                    <div>
-                      <p className="text-white font-semibold text-lg">{file.name}</p>
-                      <p className="text-sm text-emerald-400">{(file.size / 1024).toFixed(1)} KB • Ready to process</p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center gap-4">
-                    <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center border border-blue-500/20">
-                      <Upload className="w-10 h-10 text-blue-400" />
-                    </div>
-                    <div>
-                      <p className="text-white font-semibold text-lg mb-1">Drop your file here or click to browse</p>
-                      <p className="text-sm text-gray-500">PDF, TXT, DOCX, MD, or Images (max 10MB)</p>
-                    </div>
-                    <div className="flex flex-wrap justify-center gap-2 mt-2">
-                      {['📄 PDF', '📝 TXT', '📊 DOCX', '🖼️ Images'].map((type) => (
-                        <span key={type} className="px-3 py-1 bg-gray-800/50 text-gray-400 text-xs rounded-full">
-                          {type}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Prediction Question */}
-              <div className="mt-6">
-                <label className="block text-sm font-semibold text-white mb-2">
-                  🎯 Prediction Question
-                </label>
-                <textarea
-                  data-testid="prediction-query-input"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="What do you want to predict? Be specific..."
-                  className="w-full h-24 px-4 py-3 bg-gray-950 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 resize-none transition-all"
-                />
-                
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <span className="text-xs text-gray-500 mr-2">Try:</span>
-                  {exampleQuestions.map((q, i) => (
-                    <button
-                      key={i}
-                      onClick={() => setQuery(q)}
-                      className="text-xs px-3 py-1.5 bg-gray-800 hover:bg-blue-500/20 text-gray-400 hover:text-blue-300 rounded-full transition-all duration-200 border border-transparent hover:border-blue-500/30"
-                    >
-                      {q}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Submit Button */}
-              <button
-                data-testid="extract-graph-button"
-                onClick={handleSubmit}
-                disabled={!file || !query.trim() || loading}
-                className="w-full mt-6 py-4 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:from-gray-700 disabled:to-gray-700 disabled:cursor-not-allowed text-white font-bold rounded-xl flex items-center justify-center gap-3 transition-all duration-300 shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 disabled:shadow-none"
-              >
-                {loading ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    <span>Analyzing Document...</span>
-                  </>
-                ) : (
-                  <>
-                    <Zap className="w-5 h-5" />
-                    <span>Extract Knowledge Graph</span>
-                    <ArrowRight className="w-5 h-5" />
-                  </>
-                )}
-              </button>
-            </>
-          ) : (
-            /* Live Intelligence Mode Content */
-            <>
-              <div className="space-y-6">
-                {/* Topic Input */}
-                <div>
-                  <label className="block text-sm font-semibold text-white mb-2 flex items-center gap-2">
-                    <Globe className="w-4 h-4 text-green-400" />
-                    Topic to Track
-                  </label>
-                  <input
-                    data-testid="topic-input"
-                    type="text"
-                    value={topic}
-                    onChange={(e) => setTopic(e.target.value)}
-                    placeholder="e.g., Bitcoin price, Tesla earnings, Fed interest rate decision..."
-                    className="w-full px-4 py-3 bg-gray-950 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-green-500 focus:ring-2 focus:ring-green-500/20 transition-all"
-                  />
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <span className="text-xs text-gray-500 mr-2">Popular:</span>
-                    {exampleTopics.map((t, i) => (
-                      <button
-                        key={i}
-                        onClick={() => setTopic(t)}
-                        className="text-xs px-3 py-1.5 bg-gray-800 hover:bg-green-500/20 text-gray-400 hover:text-green-300 rounded-full transition-all duration-200 border border-transparent hover:border-green-500/30"
-                      >
-                        {t}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Prediction Horizon */}
-                <div>
-                  <label className="block text-sm font-semibold text-white mb-2 flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-green-400" />
-                    Prediction Horizon
-                  </label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {PREDICTION_HORIZONS.map((h) => (
-                      <button
-                        key={h}
-                        onClick={() => setHorizon(h)}
-                        className={`px-3 py-2 rounded-lg text-sm transition-all ${
-                          horizon === h
-                            ? "bg-green-600 text-white"
-                            : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white"
-                        }`}
-                      >
-                        {h}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Custom Prediction Question (Optional) */}
-                <div>
-                  <label className="block text-sm font-semibold text-white mb-2 flex items-center gap-2">
-                    🎯 Custom Question <span className="text-gray-500 font-normal">(optional)</span>
-                  </label>
-                  <input
-                    data-testid="live-query-input"
-                    type="text"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Leave blank for auto-generated question..."
-                    className="w-full px-4 py-3 bg-gray-950 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-green-500 focus:ring-2 focus:ring-green-500/20 transition-all"
-                  />
-                </div>
-
-                {/* What Live Mode Does */}
-                <div className="bg-green-500/5 border border-green-500/20 rounded-xl p-4">
-                  <h4 className="text-sm font-semibold text-green-400 mb-2 flex items-center gap-2">
-                    <Sparkles className="w-4 h-4" />
-                    What Live Intelligence Does
-                  </h4>
-                  <ul className="text-xs text-gray-400 space-y-1">
-                    <li className="flex items-center gap-2"><Wifi className="w-3 h-3 text-green-400" /> Fetches latest news and data from the web</li>
-                    <li className="flex items-center gap-2"><Users className="w-3 h-3 text-green-400" /> Creates topic-specialized agent personas</li>
-                    <li className="flex items-center gap-2"><TrendingUp className="w-3 h-3 text-green-400" /> Generates intelligence brief with key metrics</li>
-                  </ul>
-                </div>
-              </div>
-
-              {/* Submit Button */}
-              <button
-                data-testid="fetch-live-button"
-                onClick={handleSubmit}
-                disabled={!topic.trim() || loading}
-                className="w-full mt-6 py-4 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 disabled:from-gray-700 disabled:to-gray-700 disabled:cursor-not-allowed text-white font-bold rounded-xl flex items-center justify-center gap-3 transition-all duration-300 shadow-lg shadow-green-500/25 hover:shadow-green-500/40 disabled:shadow-none"
-              >
-                {loading ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    <span>Fetching Live Data...</span>
-                  </>
-                ) : (
-                  <>
-                    <Radio className="w-5 h-5" />
-                    <span>Fetch & Analyze</span>
-                    <ArrowRight className="w-5 h-5" />
-                  </>
-                )}
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Features */}
-      <div className="grid grid-cols-3 gap-4 mt-8">
+    <div className="max-w-6xl mx-auto px-4">
+      {/* Stats Row */}
+      <div className="stats-row">
         {[
-          { icon: "🧠", title: "AI Analysis", desc: "Claude extracts entities & relationships" },
-          { icon: "👥", title: "Agent Swarm", desc: "10-50 AI agents debate the topic" },
-          { icon: "📊", title: "Predictions", desc: "Confidence scores & faction analysis" }
-        ].map((feature, i) => (
-          <div key={i} className="text-center p-4 bg-gray-900/50 border border-gray-800 rounded-xl hover:border-gray-700 transition-colors">
-            <span className="text-2xl mb-2 block">{feature.icon}</span>
-            <h4 className="text-sm font-semibold text-white mb-1">{feature.title}</h4>
-            <p className="text-xs text-gray-500">{feature.desc}</p>
+          {val:'1,247',label:'Simulations Run'},
+          {val:'38K',label:'Agents Deployed'},
+          {val:'892',label:'Predictions Made'},
+          {val:'78%',label:'Accuracy Rate'},
+        ].map(s => (
+          <div key={s.label} className="stat-cell">
+            <span className="stat-val">{s.val}</span>
+            <span className="stat-lab">{s.label}</span>
           </div>
         ))}
       </div>
 
-      <div className="mt-6">
-        <SystemDashboard logs={logs} />
+      <div className="content-grid">
+        {/* LEFT COLUMN */}
+        <div className="animate-fadeUp">
+          {/* Hero */}
+          <div className="upload-hero">
+            <div className="hero-tag">
+              <svg width="8" height="8" viewBox="0 0 8 8" fill="#00f5c4"><circle cx="4" cy="4" r="4"/></svg>
+              Mission Briefing — Phase 01
+            </div>
+            <h1>{mode === "live" ? "Live Intelligence Mode" : "Feed the Swarm"}</h1>
+            <p>
+              {mode === "live"
+                ? "Fetch real-time data from the web and simulate market reactions."
+                : "Drop any document or pull live intelligence. Our AI agents will debate, polarize, and predict."
+              }
+            </p>
+          </div>
+
+          {/* Mode Tabs */}
+          <div className="tab-row" style={{justifyContent:'center',marginBottom:'24px'}}>
+            <div
+              data-testid="mode-upload"
+              className={`tab ${mode==='upload'?'active':''}`}
+              onClick={() => setMode("upload")}
+            >
+              <Upload className="w-4 h-4" /> Document Upload
+            </div>
+            <div
+              data-testid="mode-live"
+              className={`tab ${mode==='live'?'active':''}`}
+              onClick={() => setMode("live")}
+            >
+              <Radio className="w-4 h-4" /> Live Intelligence <span className="badge-new" style={{marginLeft:'4px'}}>NEW</span>
+            </div>
+          </div>
+
+          {error && (
+            <div className="mb-4 p-3 rounded-lg flex items-center gap-3 text-sm" style={{background:'rgba(255,71,87,0.1)',border:'1px solid rgba(255,71,87,0.2)',color:'var(--red)'}}>
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          {/* Main Glass Card */}
+          <div className="glass-card">
+            {mode === "upload" ? (
+              <>
+                {/* Upload Zone */}
+                <div
+                  data-testid="upload-dropzone"
+                  className={`upload-zone scan-zone ${dragActive ? 'drag-over' : ''}`}
+                  onClick={() => fileInputRef.current?.click()}
+                  onDragEnter={handleDrag}
+                  onDragLeave={handleDrag}
+                  onDragOver={handleDrag}
+                  onDrop={handleDrop}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".pdf,.txt,.docx,.md,.png,.jpg,.jpeg,.webp,.gif"
+                    onChange={(e) => {
+                      if (e.target.files?.[0]) {
+                        setFile(e.target.files[0]);
+                        addLog(`File selected: ${e.target.files[0].name}`, "success");
+                      }
+                    }}
+                    className="hidden"
+                  />
+                  {file ? (
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="upload-icon-wrap" style={{borderColor:'var(--cyan)',background:'var(--cyan-dim)'}}>
+                        <FileText className="w-6 h-6" style={{color:'var(--cyan)'}} />
+                      </div>
+                      <div className="upload-title">{file.name}</div>
+                      <div className="upload-sub" style={{color:'var(--cyan)'}}>{(file.size / 1024).toFixed(1)} KB — Ready to process</div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="upload-icon-wrap">
+                        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#00f5c4" strokeWidth="1.5" strokeLinecap="round">
+                          <polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/>
+                          <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
+                        </svg>
+                      </div>
+                      <div className="upload-title">Drop your intelligence file</div>
+                      <div className="upload-sub">PDF, TXT, DOCX, MD, or Images — max 10MB</div>
+                      <div className="file-badges">
+                        {['PDF','TXT','DOCX','MD','Images'].map(f => (
+                          <span key={f} className="file-badge">{f}</span>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Prediction Question */}
+                <div style={{padding:'0 20px 16px'}}>
+                  <div className="field-label">
+                    <Target className="w-3.5 h-3.5" /> Prediction Question
+                  </div>
+                  <textarea
+                    data-testid="prediction-query-input"
+                    className="field"
+                    rows={2}
+                    placeholder="What do you want to predict? Be specific..."
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    style={{resize:'none'}}
+                  />
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {exampleQuestions.map((q, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setQuery(q)}
+                        className="text-xs px-3 py-1.5 rounded-full transition-all"
+                        style={{background:'var(--bg3)',color:'var(--text2)',border:'1px solid var(--border)'}}
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* CTA */}
+                <div style={{padding:'0 20px 20px'}}>
+                  <button
+                    data-testid="extract-graph-button"
+                    className="btn-primary"
+                    onClick={handleSubmit}
+                    disabled={!file || !query.trim() || loading}
+                  >
+                    {loading ? (
+                      <><Loader2 className="w-5 h-5 animate-spin" /> Analyzing Document...</>
+                    ) : (
+                      <><Zap className="w-5 h-5" /> Extract Knowledge Graph</>
+                    )}
+                  </button>
+                </div>
+              </>
+            ) : (
+              /* Live Intelligence Mode */
+              <>
+                <div style={{padding:'20px'}}>
+                  <div className="space-y-5">
+                    {/* Topic Input */}
+                    <div>
+                      <div className="field-label">
+                        <Globe className="w-3.5 h-3.5" /> Topic to Track
+                      </div>
+                      <input
+                        data-testid="topic-input"
+                        type="text"
+                        className="field"
+                        value={topic}
+                        onChange={(e) => setTopic(e.target.value)}
+                        placeholder="e.g., Bitcoin price, Tesla earnings, Fed interest rate decision..."
+                      />
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {exampleTopics.map((t, i) => (
+                          <button
+                            key={i}
+                            onClick={() => setTopic(t)}
+                            className="text-xs px-3 py-1.5 rounded-full transition-all"
+                            style={{background:'var(--bg3)',color:'var(--text2)',border:'1px solid var(--border)'}}
+                          >
+                            {t}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Prediction Horizon */}
+                    <div>
+                      <div className="field-label">
+                        <Clock className="w-3.5 h-3.5" /> Prediction Horizon
+                      </div>
+                      <div className="horizon-grid">
+                        {PREDICTION_HORIZONS.map((h) => (
+                          <div
+                            key={h}
+                            className={`horizon-pill ${horizon === h ? 'active' : ''}`}
+                            onClick={() => setHorizon(h)}
+                          >
+                            {h}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Custom Question */}
+                    <div>
+                      <div className="field-label">
+                        <Target className="w-3.5 h-3.5" /> Custom Question <span className="opt">optional</span>
+                      </div>
+                      <input
+                        data-testid="live-query-input"
+                        type="text"
+                        className="field"
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        placeholder="Leave blank for auto-generated question..."
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Social Seed Button */}
+                <div style={{padding:'0 20px 16px'}}>
+                  <div className="section-div" style={{marginBottom:'12px'}}>or seed from live social data</div>
+                  <button className="btn-violet" onClick={handleFetchSocialSeed} disabled={seedLoading || !topic.trim()}>
+                    {seedLoading ? 'Fetching social data...' : '🌐 Seed with Real Reddit + Twitter'}
+                  </button>
+                  {socialSeed && socialSeed.comments_fetched > 0 && (
+                    <div className="mt-3 space-y-2 text-xs">
+                      <div className="flex items-center gap-3">
+                        <span style={{color:'var(--cyan)'}} className="font-medium">{socialSeed.comments_fetched} comments</span>
+                        <span style={{color:'var(--text3)'}}>|</span>
+                        <span style={{color:'var(--text2)'}}>{socialSeed.sources?.join(', ')}</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <span className="px-2 py-0.5 rounded" style={{background:'rgba(16,185,129,0.15)',color:'#34d399'}}>{socialSeed.real_sentiment?.positive || 0}% positive</span>
+                        <span className="px-2 py-0.5 rounded" style={{background:'rgba(255,71,87,0.15)',color:'var(--red)'}}>{socialSeed.real_sentiment?.negative || 0}% negative</span>
+                        <span className="px-2 py-0.5 rounded" style={{background:'rgba(107,114,128,0.15)',color:'var(--text2)'}}>{socialSeed.real_sentiment?.neutral || 0}% neutral</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Submit */}
+                <div style={{padding:'0 20px 20px'}}>
+                  <button
+                    data-testid="fetch-live-button"
+                    className="btn-primary"
+                    onClick={handleSubmit}
+                    disabled={!topic.trim() || loading}
+                  >
+                    {loading ? (
+                      <><Loader2 className="w-5 h-5 animate-spin" /> Fetching Live Data...</>
+                    ) : (
+                      <><Radio className="w-5 h-5" /> Fetch & Analyze</>
+                    )}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* Terminal */}
+            <div style={{padding:'0 20px 20px'}}>
+              <SystemDashboard logs={logs} />
+            </div>
+          </div>
+        </div>
+
+        {/* RIGHT COLUMN — Info Cards + Cost */}
+        <div className="animate-fadeUp-d1">
+          <div style={{fontSize:'10px',fontFamily:'var(--mono)',color:'var(--text3)',letterSpacing:'0.08em',textTransform:'uppercase',marginBottom:'12px'}}>
+            What happens next
+          </div>
+
+          {[
+            {icon:'🧠',bg:'rgba(0,245,196,0.08)',title:'AI Knowledge Extraction',desc:'Claude maps entities and relationships into a live knowledge graph.'},
+            {icon:'👥',bg:'rgba(167,139,250,0.1)',title:'Agent Swarm Generated',desc:'10-300 AI personas with beliefs, occupations, and emotional states.'},
+            {icon:'⚡',bg:'rgba(245,166,35,0.1)',title:'Multi-Round Simulation',desc:'Agents debate, react, shift beliefs. Herd and coalitions emerge.'},
+            {icon:'📊',bg:'rgba(59,130,246,0.1)',title:'Prediction Report',desc:'Confidence scores, factions, risks, and alternative scenario branches.'},
+          ].map(c => (
+            <div key={c.title} className="info-card">
+              <div className="info-card-icon" style={{background:c.bg}}>{c.icon}</div>
+              <div>
+                <h3>{c.title}</h3>
+                <p>{c.desc}</p>
+              </div>
+            </div>
+          ))}
+
+          {/* Cost Estimate */}
+          <div className="cost-card">
+            <div className="field-label" style={{marginBottom:'10px'}}>💰 Estimated Cost</div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline'}}>
+              <span style={{fontSize:'13px',color:'var(--text2)'}}>10 agents · 3 rounds</span>
+              <span style={{fontFamily:'var(--mono)',fontSize:'18px',fontWeight:'700',color:'var(--cyan)'}}>~$0.05</span>
+            </div>
+            <div className="cost-bar"><div className="cost-fill" style={{width:'25%'}}/></div>
+            <div style={{fontSize:'11px',color:'var(--text3)'}}>Gemini Flash · Haiku · Sonnet for report only</div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -1148,23 +1110,23 @@ const UploadStep = ({ sessionId, onComplete }) => {
 
 // Agent Card Component
 const AgentCard = ({ agent, showPreview = false }) => (
-  <div className="bg-gray-900 border border-gray-800 rounded-lg p-3 hover:border-gray-600 transition-colors animate-fade-in">
+  <div className="glass-card animate-fade-in" style={{padding:'12px'}}>
     <div className="flex items-start gap-3">
       <span className="text-3xl">{agent.avatar_emoji}</span>
       <div className="flex-1 min-w-0">
-        <h4 className="text-sm font-bold text-white truncate">{agent.name}</h4>
-        <p className="text-[11px] text-gray-400 truncate">{agent.occupation}</p>
+        <h4 className="text-sm font-bold truncate" style={{color:'var(--text)'}}>{agent.name}</h4>
+        <p className="text-[11px] truncate" style={{color:'var(--text2)'}}>{agent.occupation}</p>
         <div className="flex items-center gap-2 mt-1.5">
           <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${PERSONALITY_COLORS[agent.personality_type] || "badge-neutral"}`}>
             {agent.personality_type}
           </span>
-          <span className="text-[10px] text-gray-500 flex items-center gap-0.5">
+          <span className="text-[10px] flex items-center gap-0.5" style={{color:'var(--text3)'}}>
             <Target className="w-2.5 h-2.5" />
             {agent.influence_level}/10
           </span>
         </div>
         {showPreview && agent.initial_stance && (
-          <p className="text-[11px] text-gray-400 mt-2 line-clamp-2 italic">
+          <p className="text-[11px] mt-2 line-clamp-2 italic" style={{color:'var(--text2)'}}>
             "{agent.initial_stance}"
           </p>
         )}
@@ -1275,10 +1237,10 @@ const AgentStep = ({ sessionId, graph, onComplete }) => {
 
         {/* Right: Agent Grid */}
         <div className="space-y-4">
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+          <div className="bg-panel border border-sw rounded-xl p-4">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-white">{agents.length} Agents Generated</h3>
-              <span className="text-xs text-gray-400">Ready to simulate</span>
+              <h3 className="text-lg font-bold text-sw">{agents.length} Agents Generated</h3>
+              <span className="text-xs text-sw2">Ready to simulate</span>
             </div>
             
             {/* Personality Distribution */}
@@ -1297,7 +1259,7 @@ const AgentStep = ({ sessionId, graph, onComplete }) => {
               ))}
             </div>
             {agents.length > 8 && (
-              <p className="text-center text-xs text-gray-500 mt-3">
+              <p className="text-center text-xs text-sw3 mt-3">
                 +{agents.length - 8} more agents
               </p>
             )}
@@ -1308,7 +1270,7 @@ const AgentStep = ({ sessionId, graph, onComplete }) => {
           <button
             data-testid="start-simulation-button"
             onClick={() => onComplete(agents)}
-            className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg flex items-center justify-center gap-2 transition-colors"
+            className="btn-primary"
           >
             Start Simulation →
             <Play className="w-4 h-4" />
@@ -1327,8 +1289,8 @@ const AgentStep = ({ sessionId, graph, onComplete }) => {
 
       {/* Right: Agent Config */}
       <div className="space-y-4">
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-          <h3 className="text-lg font-bold text-white mb-4">Generate AI Agents</h3>
+        <div className="bg-panel border border-sw rounded-xl p-5">
+          <h3 className="text-lg font-bold text-sw mb-4">Generate AI Agents</h3>
           
           {error && (
             <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
@@ -1347,16 +1309,16 @@ const AgentStep = ({ sessionId, graph, onComplete }) => {
           )}
 
           {/* Context Summary */}
-          <div className="bg-gray-950 rounded-lg p-3 mb-4 border border-gray-800">
-            <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">World Context</p>
-            <p className="text-sm text-gray-300 line-clamp-4">{graph?.summary}</p>
+          <div className="bg-sw-bg2 rounded-lg p-3 mb-4 border border-sw">
+            <p className="text-xs text-sw3 uppercase tracking-wider mb-1">World Context</p>
+            <p className="text-sm text-sw2 line-clamp-4">{graph?.summary}</p>
           </div>
 
           {/* Agent Count Slider */}
           <div className="mb-4">
             <div className="flex items-center justify-between mb-2">
-              <label className="text-sm font-medium text-gray-300">Number of Agents</label>
-              <span className="text-xl font-bold text-blue-400 mono">{numAgents}</span>
+              <label className="text-sm font-medium text-sw">Number of Agents</label>
+              <span className="text-xl font-bold text-sw-cyan mono">{numAgents}</span>
             </div>
             <input
               data-testid="agent-count-slider"
@@ -1365,9 +1327,9 @@ const AgentStep = ({ sessionId, graph, onComplete }) => {
               max="300"
               value={numAgents}
               onChange={(e) => setNumAgents(parseInt(e.target.value))}
-              className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+              className="w-full h-2 bg-sw3 rounded-lg appearance-none cursor-pointer accent-sw-cyan"
             />
-            <div className="flex justify-between text-[10px] text-gray-500 mt-1">
+            <div className="flex justify-between text-[10px] text-sw3 mt-1">
               <span>10 ($)</span>
               <span>20 ($$)</span>
               <span>50 ($$$)</span>
@@ -1376,30 +1338,30 @@ const AgentStep = ({ sessionId, graph, onComplete }) => {
           </div>
 
           {/* Population Scale */}
-          <div data-testid="population-scale" className="bg-gray-900/50 border border-gray-800 rounded-xl p-4 mb-4">
-            <h3 className="text-xs text-gray-400 uppercase tracking-wider mb-3">Population Scale</h3>
+          <div data-testid="population-scale" className="bg-panel border border-sw rounded-xl p-4 mb-4">
+            <h3 className="text-xs text-sw2 uppercase tracking-wider mb-3">Population Scale</h3>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[10px] text-gray-500 block mb-1">Clone Multiplier ({cloneMultiplier}x)</label>
+                <label className="text-[10px] text-sw3 block mb-1">Clone Multiplier ({cloneMultiplier}x)</label>
                 <input data-testid="clone-multiplier" type="range" min="1" max="20" value={cloneMultiplier}
                   onChange={(e) => setCloneMultiplier(parseInt(e.target.value))}
-                  className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500" />
-                <div className="flex justify-between text-[10px] text-gray-600"><span>1x</span><span>20x</span></div>
+                  className="w-full h-1.5 bg-sw3 rounded-lg appearance-none cursor-pointer accent-sw-violet" />
+                <div className="flex justify-between text-[10px] text-sw3"><span>1x</span><span>20x</span></div>
               </div>
               <div>
-                <label className="text-[10px] text-gray-500 block mb-1">Silent Population ({silentPop.toLocaleString()})</label>
+                <label className="text-[10px] text-sw3 block mb-1">Silent Population ({silentPop.toLocaleString()})</label>
                 <input data-testid="silent-population" type="range" min="0" max="50000" step="1000" value={silentPop}
                   onChange={(e) => setSilentPop(parseInt(e.target.value))}
-                  className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500" />
-                <div className="flex justify-between text-[10px] text-gray-600"><span>0</span><span>50K</span></div>
+                  className="w-full h-1.5 bg-sw3 rounded-lg appearance-none cursor-pointer accent-sw-cyan" />
+                <div className="flex justify-between text-[10px] text-sw3"><span>0</span><span>50K</span></div>
               </div>
             </div>
             <div className="mt-3 text-center">
-              <span className="text-xs text-gray-400">
-                <span className="text-blue-400 font-bold">{numAgents}</span> LLM
+              <span className="text-xs text-sw2">
+                <span className="text-sw-cyan font-bold">{numAgents}</span> LLM
                 {" x "}<span className="text-purple-400 font-bold">{cloneMultiplier}</span> clones
                 {" + "}<span className="text-cyan-400 font-bold">{silentPop.toLocaleString()}</span> silent
-                {" = "}<span className="text-white font-bold text-sm">{totalPop.toLocaleString()}</span> simulated
+                {" = "}<span className="text-sw font-bold text-sm">{totalPop.toLocaleString()}</span> simulated
               </span>
             </div>
           </div>
@@ -1416,7 +1378,8 @@ const AgentStep = ({ sessionId, graph, onComplete }) => {
             data-testid="generate-agents-button"
             onClick={handleGenerate}
             disabled={loading}
-            className="w-full py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:from-gray-700 disabled:to-gray-700 disabled:cursor-not-allowed text-white font-semibold rounded-lg flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-500/20 disabled:shadow-none"
+            className="btn-primary"
+            style={{opacity: loading ? 0.6 : 1}}
           >
             {loading ? (
               <>
@@ -1434,7 +1397,7 @@ const AgentStep = ({ sessionId, graph, onComplete }) => {
           {/* Loading Skeleton Preview */}
           {loading && (
             <div className="mt-4 space-y-3 animate-fade-in">
-              <p className="text-xs text-gray-500 text-center">Creating agent personas...</p>
+              <p className="text-xs text-sw3 text-center">Creating agent personas...</p>
               <SkeletonGrid count={4} />
             </div>
           )}
@@ -1449,51 +1412,45 @@ const AgentStep = ({ sessionId, graph, onComplete }) => {
 // Post Card Component
 const PostCard = ({ post, isReply }) => (
   <div
-    className={`p-3 border border-gray-800 rounded-lg bg-gray-950/50 hover:bg-gray-800/50 transition-colors animate-slide-up ${
-      isReply ? "ml-4 border-l-2 border-l-blue-500" : ""
-    } ${post.is_real ? "border-l-2 border-l-orange-400 bg-orange-500/5" : post.platform === "Reddit" ? "border-l-2 border-l-orange-500" : ""}`}
+    className={`post-card ${post.is_real ? 'real-post' : ''} ${post.is_hub_post ? 'hub-post' : ''}`}
+    style={{marginLeft: isReply ? '16px' : '0', borderLeft: isReply ? '2px solid var(--cyan)' : undefined}}
   >
     <div className="flex items-start gap-2">
       <span className="text-xl">{post.is_real ? (post.platform === 'Reddit' ? '' : '') : post.agent_emoji}</span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-          <span className="font-semibold text-white text-xs">{post.agent_name}</span>
-          <span className="text-[10px] text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">R{post.round}</span>
-          {post.is_real && (
-            <span data-testid="real-badge" className="text-[10px] bg-orange-500/20 text-orange-400 border border-orange-500/30 px-1.5 py-0.5 rounded-full font-semibold">REAL</span>
-          )}
-          {post.is_hub_post && (
-            <span className="text-[10px] bg-purple-500/20 text-purple-400 border border-purple-500/30 px-1.5 py-0.5 rounded-full">HUB</span>
-          )}
+          <span className="font-semibold text-xs" style={{color:'var(--text)'}}>{post.agent_name}</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded" style={{color:'var(--text3)',background:'var(--bg3)'}}>R{post.round}</span>
+          {post.is_real && <span data-testid="real-badge" className="post-badge real">REAL</span>}
+          {post.is_hub_post && <span className="post-badge hub">HUB</span>}
           {post.belief_position != null && (
-            <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-              post.belief_position > 0.15 ? 'bg-green-500/15 text-green-400' :
-              post.belief_position < -0.15 ? 'bg-red-500/15 text-red-400' :
-              'bg-gray-500/15 text-gray-400'
+            <span className={`belief-pill ${
+              post.belief_position > 0.15 ? 'belief-pos' :
+              post.belief_position < -0.15 ? 'belief-neg' :
+              'belief-neu'
             }`}>
               {post.belief_position > 0.15 ? '+ support' : post.belief_position < -0.15 ? '- oppose' : '~ undecided'}
             </span>
           )}
           {isReply && (
-            <span className="text-[10px] text-blue-400">&#8617; {post.reply_to}</span>
+            <span className="text-[10px]" style={{color:'var(--cyan)'}}>&#8617; {post.reply_to}</span>
           )}
         </div>
-        <p className="text-gray-300 text-xs">{post.content}</p>
-        {/* Reaction counts from silent population */}
+        <p className="text-xs" style={{color:'var(--text2)',lineHeight:'1.6'}}>{post.content}</p>
         {post.tier1_reactions && (
-          <div className="flex gap-3 mt-1.5 text-[10px] text-gray-500">
+          <div className="flex gap-3 mt-1.5 text-[10px]" style={{color:'var(--text3)'}}>
             <span>&#128077; {post.tier1_reactions.likes?.toLocaleString()}</span>
             <span>&#128260; {post.tier1_reactions.shares?.toLocaleString()}</span>
             {post.reach_score != null && (
-              <span className={post.viral ? "text-amber-400 font-semibold" : ""}>&#9889; {(post.reach_score * 100).toFixed(1)}% reach</span>
+              <span style={{color: post.viral ? 'var(--amber)' : undefined, fontWeight: post.viral ? '600' : undefined}}>&#9889; {(post.reach_score * 100).toFixed(1)}% reach</span>
             )}
           </div>
         )}
         {post.viral && (
-          <span className="inline-flex mt-1 text-[10px] bg-amber-500/20 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded-full">VIRAL</span>
+          <span className="inline-flex mt-1 text-[10px] px-1.5 py-0.5 rounded-full" style={{background:'var(--amber-dim)',color:'var(--amber)',border:'1px solid rgba(245,166,35,0.3)'}}>VIRAL</span>
         )}
         {post.agent_tier === "clone" && (
-          <span className="inline-flex mt-1 text-[10px] bg-purple-500/10 text-purple-300 px-1.5 py-0.5 rounded-full">ECHO</span>
+          <span className="inline-flex mt-1 text-[10px] px-1.5 py-0.5 rounded-full" style={{background:'var(--violet-dim)',color:'var(--violet)'}}>ECHO</span>
         )}
       </div>
     </div>
@@ -1597,14 +1554,14 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left: Agent Preview */}
         <div className="lg:col-span-2">
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-            <h3 className="text-lg font-bold text-white mb-4">Participating Agents ({agents?.length || 0})</h3>
+          <div className="bg-panel border border-sw rounded-xl p-4">
+            <h3 className="text-lg font-bold text-sw mb-4">Participating Agents ({agents?.length || 0})</h3>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[450px] overflow-y-auto pr-2">
               {agents?.map((agent) => (
-                <div key={agent.id} className="bg-gray-950 border border-gray-800 rounded-lg p-2 text-center">
+                <div key={agent.id} className="bg-sw3 border border-sw rounded-lg p-2 text-center">
                   <span className="text-2xl">{agent.avatar_emoji}</span>
-                  <p className="text-xs text-white font-medium truncate mt-1">{agent.name}</p>
-                  <p className="text-[10px] text-gray-500 truncate">{agent.occupation}</p>
+                  <p className="text-xs text-sw font-medium truncate mt-1">{agent.name}</p>
+                  <p className="text-[10px] text-sw3 truncate">{agent.occupation}</p>
                 </div>
               ))}
             </div>
@@ -1613,9 +1570,9 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
 
         {/* Right: Simulation Config */}
         <div className="space-y-4">
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-            <h3 className="text-lg font-bold text-white mb-1">Simulation Settings</h3>
-            <p className="text-xs text-gray-400 mb-4">Configure rounds and start</p>
+          <div className="bg-panel border border-sw rounded-xl p-5">
+            <h3 className="text-lg font-bold text-sw mb-1">Simulation Settings</h3>
+            <p className="text-xs text-sw2 mb-4">Configure rounds and start</p>
 
             {error && (
               <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg flex items-center gap-2 text-red-400 text-sm">
@@ -1626,8 +1583,8 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
 
             <div className="mb-4">
               <div className="flex items-center justify-between mb-2">
-                <label className="text-sm font-medium text-gray-300">Number of Rounds</label>
-                <span className="text-xl font-bold text-blue-400 mono">{numRounds}</span>
+                <label className="text-sm font-medium text-sw">Number of Rounds</label>
+                <span className="text-xl font-bold text-sw-cyan mono">{numRounds}</span>
               </div>
               <input
                 data-testid="rounds-slider"
@@ -1636,18 +1593,18 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
                 max="10"
                 value={numRounds}
                 onChange={(e) => setNumRounds(parseInt(e.target.value))}
-                className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                className="w-full h-2 bg-sw3 rounded-lg appearance-none cursor-pointer accent-sw-cyan"
               />
-              <div className="flex justify-between text-[10px] text-gray-500 mt-1">
+              <div className="flex justify-between text-[10px] text-sw3 mt-1">
                 <span>3 (fast)</span>
                 <span>5 (balanced)</span>
                 <span>10 (deep)</span>
               </div>
             </div>
 
-            <div data-testid="cost-estimate" className="bg-gray-800/60 rounded-lg p-3 mb-4 flex items-center justify-between">
-              <span className="text-xs text-gray-400">Estimated cost</span>
-              <span className="text-sm font-mono font-bold text-emerald-400">
+            <div data-testid="cost-estimate" className="bg-sw-bg3/60 rounded-lg p-3 mb-4 flex items-center justify-between">
+              <span className="text-xs text-sw2">Estimated cost</span>
+              <span className="text-sm font-mono font-bold text-sw-cyan">
                 ~${(0.02 + Math.ceil((agents?.length || 10) / 10) * 0.003 + Math.ceil((agents?.length || 10) / 10) * numRounds * 0.004).toFixed(3)}
               </span>
             </div>
@@ -1661,7 +1618,7 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
             <button
               data-testid="run-simulation-button"
               onClick={startSimulation}
-              className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg flex items-center justify-center gap-2 transition-colors"
+              className="btn-primary"
             >
               <Play className="w-4 h-4" />
               Start Simulation
@@ -1677,16 +1634,16 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
   return (
     <div className="animate-fade-in space-y-4">
       {/* Progress Bar */}
-      <div className="bg-gray-900 border border-gray-800 rounded-lg p-3">
+      <div className="bg-panel border border-sw rounded-lg p-3">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-sm text-gray-400">
+          <span className="text-sm text-sw2">
             {isDone ? "Simulation Complete" : `Round ${status?.current_round || 0} of ${status?.total_rounds || numRounds}`}
           </span>
-          <span className="text-sm text-blue-400 mono font-bold">{posts.length} posts</span>
+          <span className="text-sm text-sw-cyan mono font-bold">{posts.length} posts</span>
         </div>
-        <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+        <div className="h-2 bg-sw-bg3 rounded-full overflow-hidden">
           <div
-            className="h-full bg-gradient-to-r from-blue-600 to-emerald-500 transition-all duration-500"
+            className="h-full bg-sw-cyan transition-all duration-500"
             style={{ width: `${((status?.current_round || 0) / (status?.total_rounds || numRounds)) * 100}%` }}
           />
         </div>
@@ -1696,35 +1653,35 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
       {simMeta && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
           {/* Emotional Temperature */}
-          <div className="bg-gray-900/50 rounded-xl p-3 border border-gray-800">
-            <p className="text-xs text-gray-400 uppercase tracking-wider mb-2">Crowd Emotion</p>
+          <div className="bg-panel rounded-xl p-3 border border-sw">
+            <p className="text-xs text-sw2 uppercase tracking-wider mb-2">Crowd Emotion</p>
             <EmotionalTemperatureGauge data={simMeta.emotionalSummary} />
           </div>
           {/* Belief Distribution */}
           {simMeta.beliefSummary && (
-            <div className="bg-gray-900/50 rounded-xl p-3 border border-gray-800">
-              <p className="text-xs text-gray-400 uppercase tracking-wider mb-2">Belief Distribution</p>
+            <div className="bg-panel rounded-xl p-3 border border-sw">
+              <p className="text-xs text-sw2 uppercase tracking-wider mb-2">Belief Distribution</p>
               <div className="flex gap-2 text-xs">
-                <span className="bg-green-500/15 text-green-400 px-2 py-1 rounded">{simMeta.beliefSummary.support}% support</span>
+                <span className="bg-green-500/15 text-sw-cyan px-2 py-1 rounded">{simMeta.beliefSummary.support}% support</span>
                 <span className="bg-red-500/15 text-red-400 px-2 py-1 rounded">{simMeta.beliefSummary.opposition}% oppose</span>
-                <span className="bg-gray-500/15 text-gray-400 px-2 py-1 rounded">{simMeta.beliefSummary.undecided}% undecided</span>
+                <span className="bg-sw3/15 text-sw2 px-2 py-1 rounded">{simMeta.beliefSummary.undecided}% undecided</span>
               </div>
             </div>
           )}
           {/* Network & Population */}
           {(simMeta.networkStats || simMeta.tierBreakdown) && (
-            <div className="bg-gray-900/50 rounded-xl p-3 border border-gray-800">
-              <p className="text-xs text-gray-400 uppercase tracking-wider mb-2">Population</p>
+            <div className="bg-panel rounded-xl p-3 border border-sw">
+              <p className="text-xs text-sw2 uppercase tracking-wider mb-2">Population</p>
               <div className="flex flex-wrap gap-1.5 text-xs">
                 {simMeta.tierBreakdown && (
                   <>
-                    <span className="bg-blue-500/15 text-blue-400 px-2 py-1 rounded">{simMeta.tierBreakdown.tier1} LLM</span>
+                    <span className="bg-sw-cyan/15 text-sw-cyan px-2 py-1 rounded">{simMeta.tierBreakdown.tier1} LLM</span>
                     <span className="bg-purple-500/15 text-purple-400 px-2 py-1 rounded">{simMeta.tierBreakdown.tier2} echo</span>
                     <span className="bg-cyan-500/15 text-cyan-400 px-2 py-1 rounded">{(simMeta.tierBreakdown.tier3 || 0).toLocaleString()} reacting</span>
                   </>
                 )}
                 {simMeta.populationSize > 0 && (
-                  <span className="bg-white/10 text-white px-2 py-1 rounded font-semibold">{simMeta.populationSize.toLocaleString()} total</span>
+                  <span className="bg-white/10 text-sw px-2 py-1 rounded font-semibold">{simMeta.populationSize.toLocaleString()} total</span>
                 )}
               </div>
             </div>
@@ -1738,20 +1695,20 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
       {/* Dual Feed Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Twitter Feed */}
-        <div className="flex flex-col h-[500px] border border-gray-800 rounded-xl bg-gray-900 overflow-hidden">
-          <div className="px-3 py-2 border-b border-gray-800 flex items-center justify-between bg-gray-950">
+        <div className="flex flex-col h-[500px] border border-sw rounded-xl bg-panel overflow-hidden">
+          <div className="px-3 py-2 border-b border-sw flex items-center justify-between bg-sw-bg2">
             <div className="flex items-center gap-2">
-              <Twitter className="w-4 h-4 text-blue-400" />
-              <span className="font-semibold text-white text-sm">Twitter Feed</span>
+              <Twitter className="w-4 h-4 text-sw-cyan" />
+              <span className="font-semibold text-sw text-sm">Twitter Feed</span>
             </div>
-            <span className="text-[10px] text-gray-500">{twitterPosts.length} posts</span>
+            <span className="text-[10px] text-sw3">{twitterPosts.length} posts</span>
           </div>
           <div ref={twitterFeedRef} className="flex-1 overflow-y-auto p-3 space-y-2">
             {twitterPosts.map((post, i) => (
               <PostCard key={i} post={post} isReply={post.post_type === "reply"} />
             ))}
             {!isDone && twitterPosts.length === 0 && (
-              <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+              <div className="flex items-center justify-center h-full text-sw3 text-sm">
                 <Loader2 className="w-4 h-4 animate-spin mr-2" />
                 Waiting for posts...
               </div>
@@ -1760,20 +1717,20 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
         </div>
 
         {/* Reddit Feed */}
-        <div className="flex flex-col h-[500px] border border-gray-800 rounded-xl bg-gray-900 overflow-hidden">
-          <div className="px-3 py-2 border-b border-gray-800 flex items-center justify-between bg-gray-950">
+        <div className="flex flex-col h-[500px] border border-sw rounded-xl bg-panel overflow-hidden">
+          <div className="px-3 py-2 border-b border-sw flex items-center justify-between bg-sw-bg2">
             <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center text-white text-[10px] font-bold">R</div>
-              <span className="font-semibold text-white text-sm">Reddit Feed</span>
+              <div className="w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center text-sw text-[10px] font-bold">R</div>
+              <span className="font-semibold text-sw text-sm">Reddit Feed</span>
             </div>
-            <span className="text-[10px] text-gray-500">{redditPosts.length} posts</span>
+            <span className="text-[10px] text-sw3">{redditPosts.length} posts</span>
           </div>
           <div ref={redditFeedRef} className="flex-1 overflow-y-auto p-3 space-y-2">
             {redditPosts.map((post, i) => (
               <PostCard key={i} post={post} isReply={post.post_type === "reply"} />
             ))}
             {!isDone && redditPosts.length === 0 && (
-              <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+              <div className="flex items-center justify-center h-full text-sw3 text-sm">
                 <Loader2 className="w-4 h-4 animate-spin mr-2" />
                 Waiting for posts...
               </div>
@@ -1789,7 +1746,7 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
           <button
             data-testid="generate-report-button"
             onClick={() => onComplete(posts)}
-            className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg flex items-center justify-center gap-2 transition-colors"
+            className="btn-primary"
           >
             Generate Report
             <BarChart3 className="w-4 h-4" />
@@ -1809,7 +1766,7 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
                 setError('Failed to extend simulation');
               }
             }}
-            className="w-full py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm font-medium rounded-lg transition-colors"
+            className="btn-secondary"
           >
             + Extend 3 more rounds (skip regeneration, ~$0.02)
           </button>
@@ -1824,35 +1781,21 @@ const ConfidenceGauge = ({ score, confidence }) => {
   const percentage = Math.round(score * 100);
   const circumference = 2 * Math.PI * 40;
   const offset = circumference - (score * circumference);
-  const color = confidence === "High" ? "#10b981" : confidence === "Medium" ? "#f59e0b" : "#ef4444";
+  const color = confidence === "High" ? "#00f5c4" : confidence === "Medium" ? "#f5a623" : "#ff4757";
   
   return (
     <div className="relative w-28 h-28">
       <svg className="w-full h-full -rotate-90">
+        <circle cx="56" cy="56" r="40" fill="none" stroke="var(--bg3)" strokeWidth="8" />
         <circle
-          cx="56"
-          cy="56"
-          r="40"
-          fill="none"
-          stroke="#1f2937"
-          strokeWidth="8"
-        />
-        <circle
-          cx="56"
-          cy="56"
-          r="40"
-          fill="none"
-          stroke={color}
-          strokeWidth="8"
-          strokeDasharray={circumference}
-          strokeDashoffset={offset}
-          strokeLinecap="round"
-          className="transition-all duration-1000"
+          cx="56" cy="56" r="40" fill="none" stroke={color} strokeWidth="8"
+          strokeDasharray={circumference} strokeDashoffset={offset}
+          strokeLinecap="round" className="transition-all duration-1000"
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-2xl font-bold text-white mono">{percentage}%</span>
-        <span className="text-[10px] text-gray-400">{confidence}</span>
+        <span className="text-2xl font-bold mono" style={{color:'var(--text)'}}>{percentage}%</span>
+        <span className="text-[10px]" style={{color:'var(--text2)'}}>{confidence}</span>
       </div>
     </div>
   );
@@ -1902,11 +1845,11 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
   if (!report && !loading) {
     return (
       <div className="max-w-md mx-auto text-center py-12">
-        <div className="w-20 h-20 rounded-full bg-blue-500/10 flex items-center justify-center mx-auto mb-4">
-          <BarChart3 className="w-10 h-10 text-blue-400" />
+        <div className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4" style={{background:'var(--cyan-dim)'}}>
+          <BarChart3 className="w-10 h-10 text-sw-cyan" />
         </div>
-        <h2 className="text-2xl font-bold text-white mb-2">Generate Prediction Report</h2>
-        <p className="text-gray-400 text-sm mb-6">
+        <h2 className="text-2xl font-bold text-sw mb-2">Generate Prediction Report</h2>
+        <p className="text-sw2 text-sm mb-6">
           Analyze {posts?.length || 0} posts to produce insights
         </p>
         
@@ -1920,7 +1863,7 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
         <button
           data-testid="analyze-report-button"
           onClick={generateReport}
-          className="py-3 px-6 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg flex items-center justify-center gap-2 mx-auto transition-colors"
+          className="py-3 px-6 btn-primary text-sw font-semibold rounded-lg flex items-center justify-center gap-2 mx-auto"
         >
           <BarChart3 className="w-4 h-4" />
           Generate Report
@@ -1935,15 +1878,15 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
         {/* Loading Header */}
         <div className="text-center py-8">
           <div className="relative inline-block">
-            <div className="w-20 h-20 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 animate-spin mx-auto" style={{ animationDuration: '3s' }}>
-              <div className="absolute inset-2 bg-gray-950 rounded-full" />
+            <div className="w-20 h-20 rounded-full animate-spin mx-auto" style={{ animationDuration: '3s', background:'linear-gradient(135deg, var(--cyan), var(--violet))' }}>
+              <div className="absolute inset-2 rounded-full" style={{background:'var(--bg)'}} />
             </div>
             <div className="absolute inset-0 flex items-center justify-center">
               <span className="text-2xl">🧠</span>
             </div>
           </div>
-          <h2 className="text-xl font-bold text-white mt-6 mb-2">ReportAgent Analyzing...</h2>
-          <p className="text-gray-400 text-sm">Processing simulation data and generating insights</p>
+          <h2 className="text-xl font-bold text-sw mt-6 mb-2">ReportAgent Analyzing...</h2>
+          <p className="text-sw2 text-sm">Processing simulation data and generating insights</p>
         </div>
 
         {/* Skeleton Report Preview */}
@@ -1954,7 +1897,7 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
           </div>
           <div className="space-y-4">
             <SkeletonCard />
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-3">
+            <div className="bg-panel border border-sw rounded-xl p-6 space-y-3">
               <Skeleton className="h-5 w-1/3" />
               <Skeleton className="h-3 w-full" />
               <Skeleton className="h-3 w-4/5" />
@@ -1969,12 +1912,12 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
   return (
     <div className="animate-fade-in space-y-4">
       {/* Header with Confidence */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+      <div className="bg-panel border border-sw rounded-xl p-5">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex-1">
-            <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Predicted Outcome</p>
-            <p className="text-xl font-bold text-white mb-2">{report.prediction?.outcome}</p>
-            <p className="text-sm text-gray-400">Timeframe: {report.prediction?.timeframe}</p>
+            <p className="text-xs text-sw3 uppercase tracking-wider mb-1">Predicted Outcome</p>
+            <p className="text-xl font-bold text-sw mb-2">{report.prediction?.outcome}</p>
+            <p className="text-sm text-sw2">Timeframe: {report.prediction?.timeframe}</p>
           </div>
           <ConfidenceGauge 
             score={report.prediction?.confidence_score || 0.5}
@@ -1984,7 +1927,7 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
         {/* Simulation Quality Badge (from report or background critic) */}
         {(report.quality_score != null || qualityScore) && (
           <div data-testid="quality-score-badge" className={`mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border ${
-            (qualityScore || report.quality_score) >= 8 ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400' :
+            (qualityScore || report.quality_score) >= 8 ? 'bg-emerald-500/15 border-emerald-500/40 text-sw-cyan' :
             (qualityScore || report.quality_score) >= 6 ? 'bg-amber-500/15 border-amber-500/40 text-amber-400' :
             'bg-red-500/15 border-red-500/40 text-red-400'
           }`}>
@@ -2000,12 +1943,12 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
           {/* Story Arc */}
           {sessionMeta.round_narratives?.length > 0 && (
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <h3 data-testid="story-arc" className="text-sm font-bold text-white mb-2">Simulation Story Arc</h3>
+            <div className="bg-panel border border-sw rounded-xl p-4">
+              <h3 data-testid="story-arc" className="text-sm font-bold text-sw mb-2">Simulation Story Arc</h3>
               <div className="space-y-1.5">
                 {sessionMeta.round_narratives.map((n, i) => (
-                  <p key={i} className="text-xs text-gray-400 leading-relaxed">
-                    <span className="text-blue-400 font-medium">{n.startsWith("R") || n.startsWith("BREAKING") ? "" : `Round ${i+1}: `}</span>{n}
+                  <p key={i} className="text-xs text-sw2 leading-relaxed">
+                    <span className="text-sw-cyan font-medium">{n.startsWith("R") || n.startsWith("BREAKING") ? "" : `Round ${i+1}: `}</span>{n}
                   </p>
                 ))}
               </div>
@@ -2014,18 +1957,18 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
           {/* Emotional Temperature & Belief Summary */}
           <div className="space-y-3">
             {sessionMeta.emotional_summary && (
-              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-                <h3 className="text-sm font-bold text-white mb-2">Final Crowd Emotion</h3>
+              <div className="bg-panel border border-sw rounded-xl p-4">
+                <h3 className="text-sm font-bold text-sw mb-2">Final Crowd Emotion</h3>
                 <EmotionalTemperatureGauge data={sessionMeta.emotional_summary} />
               </div>
             )}
             {sessionMeta.belief_summary && (
-              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-                <h3 className="text-sm font-bold text-white mb-2">Final Belief Distribution</h3>
+              <div className="bg-panel border border-sw rounded-xl p-4">
+                <h3 className="text-sm font-bold text-sw mb-2">Final Belief Distribution</h3>
                 <div className="flex gap-2 text-xs flex-wrap">
-                  <span className="bg-green-500/15 text-green-400 px-2 py-1 rounded">{sessionMeta.belief_summary.support}% support</span>
+                  <span className="bg-green-500/15 text-sw-cyan px-2 py-1 rounded">{sessionMeta.belief_summary.support}% support</span>
                   <span className="bg-red-500/15 text-red-400 px-2 py-1 rounded">{sessionMeta.belief_summary.opposition}% oppose</span>
-                  <span className="bg-gray-500/15 text-gray-400 px-2 py-1 rounded">{sessionMeta.belief_summary.undecided}% undecided</span>
+                  <span className="bg-sw3/15 text-sw2 px-2 py-1 rounded">{sessionMeta.belief_summary.undecided}% undecided</span>
                   {sessionMeta.belief_summary.polarisation != null && (
                     <span className="bg-yellow-500/15 text-yellow-400 px-2 py-1 rounded">Polarisation: {sessionMeta.belief_summary.polarisation?.toFixed(2)}</span>
                   )}
@@ -2042,35 +1985,35 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="space-y-4">
           {/* Executive Summary */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-            <h3 className="text-sm font-bold text-white mb-2">Executive Summary</h3>
-            <p className="text-sm text-gray-300 leading-relaxed">{report.executive_summary}</p>
+          <div className="bg-panel border border-sw rounded-xl p-4">
+            <h3 className="text-sm font-bold text-sw mb-2">Executive Summary</h3>
+            <p className="text-sm text-sw2 leading-relaxed">{report.executive_summary}</p>
           </div>
 
           {/* Opinion Landscape */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-            <h3 className="text-sm font-bold text-white mb-3">Opinion Landscape</h3>
+          <div className="bg-panel border border-sw rounded-xl p-4">
+            <h3 className="text-sm font-bold text-sw mb-3">Opinion Landscape</h3>
             
             <div className="flex h-3 rounded-full overflow-hidden mb-2">
               <div className="bg-emerald-500" style={{ width: `${report.opinion_landscape?.support_percentage || 0}%` }} />
               <div className="bg-red-500" style={{ width: `${report.opinion_landscape?.opposition_percentage || 0}%` }} />
-              <div className="bg-gray-600" style={{ width: `${report.opinion_landscape?.undecided_percentage || 0}%` }} />
+              <div className="bg-sw3" style={{ width: `${report.opinion_landscape?.undecided_percentage || 0}%` }} />
             </div>
             <div className="flex justify-between text-[10px]">
-              <span className="text-emerald-400">Support: {report.opinion_landscape?.support_percentage}%</span>
+              <span className="text-sw-cyan">Support: {report.opinion_landscape?.support_percentage}%</span>
               <span className="text-red-400">Oppose: {report.opinion_landscape?.opposition_percentage}%</span>
-              <span className="text-gray-400">Undecided: {report.opinion_landscape?.undecided_percentage}%</span>
+              <span className="text-sw2">Undecided: {report.opinion_landscape?.undecided_percentage}%</span>
             </div>
           </div>
 
           {/* Real vs Simulated Comparison */}
           {report.real_vs_simulated && (
-            <div data-testid="real-vs-simulated" className="bg-gray-900 border border-orange-500/30 rounded-xl p-4">
+            <div data-testid="real-vs-simulated" className="bg-panel border rounded-xl p-4" style={{borderColor:'rgba(245,166,35,0.3)'}}>
               <div className="flex items-center gap-2 mb-3">
                 <Globe className="w-4 h-4 text-orange-400" />
-                <h3 className="text-sm font-bold text-white">Real vs Simulated</h3>
+                <h3 className="text-sm font-bold text-sw">Real vs Simulated</h3>
                 <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
-                  report.real_vs_simulated.drift_percentage <= 10 ? 'bg-emerald-500/20 text-emerald-400' :
+                  report.real_vs_simulated.drift_percentage <= 10 ? 'bg-emerald-500/20 text-sw-cyan' :
                   report.real_vs_simulated.drift_percentage <= 25 ? 'bg-amber-500/20 text-amber-400' :
                   'bg-red-500/20 text-red-400'
                 }`}>
@@ -2080,23 +2023,23 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
 
               <div className="grid grid-cols-2 gap-3 mb-3">
                 <div>
-                  <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Real ({report.real_vs_simulated.total_real_comments} comments)</p>
+                  <p className="text-[10px] text-sw3 uppercase tracking-wider mb-1">Real ({report.real_vs_simulated.total_real_comments} comments)</p>
                   <div className="flex gap-1">
-                    <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/15 text-green-400">{report.real_vs_simulated.real_sentiment?.positive}% pos</span>
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/15 text-sw-cyan">{report.real_vs_simulated.real_sentiment?.positive}% pos</span>
                     <span className="text-xs px-1.5 py-0.5 rounded bg-red-500/15 text-red-400">{report.real_vs_simulated.real_sentiment?.negative}% neg</span>
                   </div>
                 </div>
                 <div>
-                  <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Simulated</p>
+                  <p className="text-[10px] text-sw3 uppercase tracking-wider mb-1">Simulated</p>
                   <div className="flex gap-1">
-                    <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/15 text-green-400">{report.real_vs_simulated.simulated_sentiment?.positive}% pos</span>
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/15 text-sw-cyan">{report.real_vs_simulated.simulated_sentiment?.positive}% pos</span>
                     <span className="text-xs px-1.5 py-0.5 rounded bg-red-500/15 text-red-400">{report.real_vs_simulated.simulated_sentiment?.negative}% neg</span>
                   </div>
                 </div>
               </div>
 
               <div className="flex items-center gap-2">
-                <div className="flex-1 bg-gray-800 rounded-full h-2 overflow-hidden">
+                <div className="flex-1 bg-sw-bg3 rounded-full h-2 overflow-hidden">
                   <div
                     className={`h-full rounded-full ${
                       report.real_vs_simulated.drift_percentage <= 10 ? 'bg-emerald-500' :
@@ -2105,29 +2048,29 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
                     style={{ width: `${Math.min(100, report.real_vs_simulated.drift_percentage * 2)}%` }}
                   />
                 </div>
-                <span className="text-xs text-gray-400 font-mono">{report.real_vs_simulated.drift_percentage}% drift</span>
+                <span className="text-xs text-sw2 font-mono">{report.real_vs_simulated.drift_percentage}% drift</span>
               </div>
-              <p className="text-[10px] text-gray-500 mt-2">Sources: {report.real_vs_simulated.sources?.join(', ')}</p>
+              <p className="text-[10px] text-sw3 mt-2">Sources: {report.real_vs_simulated.sources?.join(', ')}</p>
             </div>
           )}
 
           {/* Key Factions */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-            <h3 className="text-sm font-bold text-white mb-3">Key Factions</h3>
+          <div className="bg-panel border border-sw rounded-xl p-4">
+            <h3 className="text-sm font-bold text-sw mb-3">Key Factions</h3>
             <div className="space-y-2">
               {report.opinion_landscape?.key_factions?.map((faction, i) => (
-                <div key={i} className="p-2.5 bg-gray-950 rounded-lg border border-gray-800">
+                <div key={i} className="p-2.5 bg-sw3 rounded-lg border border-sw">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="font-medium text-white text-sm">{faction.name}</span>
+                    <span className="font-medium text-sw text-sm">{faction.name}</span>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                      faction.size === "Large" ? "bg-blue-500/20 text-blue-400" :
+                      faction.size === "Large" ? "bg-sw-cyan/20 text-sw-cyan" :
                       faction.size === "Medium" ? "bg-amber-500/20 text-amber-400" :
-                      "bg-gray-500/20 text-gray-400"
+                      "bg-sw3/20 text-sw2"
                     }`}>
                       {faction.size}
                     </span>
                   </div>
-                  <p className="text-xs text-gray-400">{faction.stance}</p>
+                  <p className="text-xs text-sw2">{faction.stance}</p>
                 </div>
               ))}
             </div>
@@ -2138,8 +2081,8 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
         <div className="space-y-4">
           {/* Risk Factors */}
           {report.risk_factors?.length > 0 && (
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <h3 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
+            <div className="bg-panel border border-sw rounded-xl p-4">
+              <h3 className="text-sm font-bold text-sw mb-3 flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4 text-red-400" />
                 Risk Factors
               </h3>
@@ -2149,13 +2092,13 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
                     <span className={`text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 ${
                       risk.likelihood === "High" ? "bg-red-500/20 text-red-400" :
                       risk.likelihood === "Medium" ? "bg-amber-500/20 text-amber-400" :
-                      "bg-gray-500/20 text-gray-400"
+                      "bg-sw3/20 text-sw2"
                     }`}>
                       {risk.likelihood}
                     </span>
                     <div>
-                      <p className="text-sm text-white font-medium">{risk.factor}</p>
-                      <p className="text-xs text-gray-400">{risk.impact}</p>
+                      <p className="text-sm text-sw font-medium">{risk.factor}</p>
+                      <p className="text-xs text-sw2">{risk.impact}</p>
                     </div>
                   </div>
                 ))}
@@ -2165,17 +2108,17 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
 
           {/* Turning Points */}
           {report.key_turning_points?.length > 0 && (
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <h3 className="text-sm font-bold text-white mb-3">Key Turning Points</h3>
+            <div className="bg-panel border border-sw rounded-xl p-4">
+              <h3 className="text-sm font-bold text-sw mb-3">Key Turning Points</h3>
               <div className="space-y-2">
                 {report.key_turning_points.map((point, i) => (
                   <div key={i} className="flex gap-2">
-                    <div className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 font-bold text-[10px]">
+                    <div className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-sw-cyan font-bold text-[10px]" style={{background:'var(--cyan-dim)'}}>
                       R{point.round}
                     </div>
                     <div>
-                      <p className="text-sm text-white">{point.description}</p>
-                      <p className="text-xs text-gray-400">{point.impact}</p>
+                      <p className="text-sm text-sw">{point.description}</p>
+                      <p className="text-xs text-sw2">{point.impact}</p>
                     </div>
                   </div>
                 ))}
@@ -2185,13 +2128,13 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
 
           {/* Agent Highlights */}
           {report.agent_highlights?.length > 0 && (
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <h3 className="text-sm font-bold text-white mb-3">Agent Highlights</h3>
+            <div className="bg-panel border border-sw rounded-xl p-4">
+              <h3 className="text-sm font-bold text-sw mb-3">Agent Highlights</h3>
               <div className="space-y-2">
                 {report.agent_highlights.slice(0, 3).map((highlight, i) => (
-                  <div key={i} className="p-2.5 bg-gray-950 rounded-lg border border-gray-800">
-                    <p className="font-medium text-white text-sm">{highlight.agent_name}</p>
-                    <p className="text-xs text-gray-400 mb-1">{highlight.role_in_simulation}</p>
+                  <div key={i} className="p-2.5 bg-sw3 rounded-lg border border-sw">
+                    <p className="font-medium text-sw text-sm">{highlight.agent_name}</p>
+                    <p className="text-xs text-sw2 mb-1">{highlight.role_in_simulation}</p>
                     <p className="text-xs text-blue-300 italic">"{highlight.notable_quote?.slice(0, 80)}..."</p>
                   </div>
                 ))}
@@ -2206,7 +2149,7 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
         <button
           data-testid="download-pdf-button"
           onClick={() => window.open(`${API}/sessions/${sessionId}/report/pdf`, '_blank')}
-          className="flex-1 py-3 bg-gray-800 hover:bg-gray-700 text-white font-semibold rounded-lg flex items-center justify-center gap-2 transition-colors border border-gray-700"
+          className="btn-secondary flex-1"
         >
           <Download className="w-4 h-4" />
           Download PDF
@@ -2215,7 +2158,7 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
         <button
           data-testid="interact-with-agents-button"
           onClick={() => onComplete(report)}
-          className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg flex items-center justify-center gap-2 transition-colors"
+          className="btn-primary flex-1"
         >
           💬 Interact with Agents
           <ChevronRight className="w-4 h-4" />
@@ -2278,45 +2221,45 @@ const ChatPanel = ({ sessionId, agents, report }) => {
     : ["What's your take on this?", "Why do you feel that way?", "What would change your mind?"];
 
   return (
-    <div className="flex h-[600px] border border-gray-800 rounded-xl overflow-hidden bg-gray-900">
+    <div className="flex h-[600px] border border-sw rounded-xl overflow-hidden bg-panel">
       {/* Sidebar */}
-      <div className="w-56 border-r border-gray-800 bg-gray-950 overflow-y-auto hidden md:block">
-        <div className="p-3 border-b border-gray-800">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Chat Targets</h3>
+      <div className="w-56 border-r border-sw bg-sw-bg2 overflow-y-auto hidden md:block">
+        <div className="p-3 border-b border-sw">
+          <h3 className="text-xs font-semibold text-sw2 uppercase tracking-wider">Chat Targets</h3>
         </div>
         
         <button
           data-testid="chat-target-report-agent"
           onClick={() => setSelectedTarget({ type: "report", id: "report_agent", name: "ReportAgent" })}
-          className={`w-full p-3 flex items-center gap-2 border-b border-gray-800 transition-colors ${
-            selectedTarget.id === "report_agent" ? "bg-blue-500/10 border-l-2 border-l-blue-500" : "hover:bg-gray-900"
+          className={`w-full p-3 flex items-center gap-2 border-b border-sw transition-colors ${
+            selectedTarget.id === "report_agent" ? "bg-sw-cyan/10 border-l-2 border-l-sw-cyan" : "hover:bg-sw3"
           }`}
         >
-          <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-lg">
+          <div className="w-8 h-8 rounded-full flex items-center justify-center text-lg" style={{background:'var(--cyan-dim)'}}>
             🧠
           </div>
           <div className="text-left">
-            <p className="font-semibold text-white text-xs">ReportAgent</p>
-            <p className="text-[10px] text-gray-500">Analysis Expert</p>
+            <p className="font-semibold text-sw text-xs">ReportAgent</p>
+            <p className="text-[10px] text-sw3">Analysis Expert</p>
           </div>
         </button>
 
         <div className="p-2">
-          <p className="text-[10px] text-gray-500 px-2 py-1">Agents ({agents?.length || 0})</p>
+          <p className="text-[10px] text-sw3 px-2 py-1">Agents ({agents?.length || 0})</p>
         </div>
         {agents?.slice(0, 10).map((agent) => (
           <button
             key={agent.id}
             data-testid={`chat-target-${agent.id}`}
             onClick={() => setSelectedTarget({ type: "agent", id: agent.id, name: agent.name, agent })}
-            className={`w-full p-2 flex items-center gap-2 border-b border-gray-800/50 transition-colors ${
-              selectedTarget.id === agent.id ? "bg-blue-500/10 border-l-2 border-l-blue-500" : "hover:bg-gray-900"
+            className={`w-full p-2 flex items-center gap-2 border-b border-sw/50 transition-colors ${
+              selectedTarget.id === agent.id ? "bg-sw-cyan/10 border-l-2 border-l-sw-cyan" : "hover:bg-sw3"
             }`}
           >
             <span className="text-xl">{agent.avatar_emoji}</span>
             <div className="text-left min-w-0">
-              <p className="font-medium text-white text-xs truncate">{agent.name}</p>
-              <p className="text-[10px] text-gray-500 truncate">{agent.occupation}</p>
+              <p className="font-medium text-sw text-xs truncate">{agent.name}</p>
+              <p className="text-[10px] text-sw3 truncate">{agent.occupation}</p>
             </div>
           </button>
         ))}
@@ -2324,13 +2267,13 @@ const ChatPanel = ({ sessionId, agents, report }) => {
 
       {/* Chat Area */}
       <div className="flex-1 flex flex-col">
-        <div className="px-4 py-3 border-b border-gray-800 bg-gray-950 flex items-center gap-2">
+        <div className="px-4 py-3 border-b border-sw bg-sw-bg2 flex items-center gap-2">
           <span className="text-xl">
             {selectedTarget.type === "report" ? "🧠" : selectedTarget.agent?.avatar_emoji}
           </span>
           <div>
-            <h3 className="font-semibold text-white text-sm">{selectedTarget.name}</h3>
-            <p className="text-[10px] text-gray-500">
+            <h3 className="font-semibold text-sw text-sm">{selectedTarget.name}</h3>
+            <p className="text-[10px] text-sw3">
               {selectedTarget.type === "report" ? "Analysis Expert" : selectedTarget.agent?.occupation}
             </p>
           </div>
@@ -2338,14 +2281,14 @@ const ChatPanel = ({ sessionId, agents, report }) => {
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {messages.length === 0 && (
-            <div className="text-center text-gray-500 py-6">
+            <div className="text-center text-sw3 py-6">
               <p className="text-sm mb-3">Start a conversation</p>
               <div className="flex flex-wrap justify-center gap-2">
                 {quickPrompts.map((prompt, i) => (
                   <button
                     key={i}
                     onClick={() => setInput(prompt)}
-                    className="text-xs px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-full transition-colors"
+                    className="text-xs px-2.5 py-1 bg-sw-bg3 hover:bg-sw3 text-sw2 rounded-full transition-colors"
                   >
                     {prompt}
                   </button>
@@ -2362,8 +2305,8 @@ const ChatPanel = ({ sessionId, agents, report }) => {
               <div
                 className={`max-w-[80%] px-3 py-2 rounded-2xl text-sm ${
                   msg.role === "user"
-                    ? "bg-blue-600 text-white rounded-tr-sm"
-                    : "bg-gray-800 text-gray-200 rounded-tl-sm"
+                    ? "bg-sw-cyan text-sw rounded-tr-sm"
+                    : "bg-sw-bg3 text-sw2 rounded-tl-sm"
                 }`}
               >
                 {msg.content}
@@ -2373,7 +2316,7 @@ const ChatPanel = ({ sessionId, agents, report }) => {
           
           {loading && (
             <div className="flex justify-start">
-              <div className="bg-gray-800 text-gray-200 px-3 py-2 rounded-2xl rounded-tl-sm">
+              <div className="bg-sw-bg3 text-sw2 px-3 py-2 rounded-2xl rounded-tl-sm">
                 <Loader2 className="w-4 h-4 animate-spin" />
               </div>
             </div>
@@ -2382,7 +2325,7 @@ const ChatPanel = ({ sessionId, agents, report }) => {
           <div ref={messagesEndRef} />
         </div>
 
-        <div className="p-3 border-t border-gray-800 bg-gray-950">
+        <div className="p-3 border-t border-sw bg-sw-bg2">
           <div className="flex gap-2">
             <input
               data-testid="chat-input"
@@ -2391,13 +2334,13 @@ const ChatPanel = ({ sessionId, agents, report }) => {
               onChange={(e) => setInput(e.target.value)}
               onKeyPress={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
               placeholder={`Message ${selectedTarget.name}...`}
-              className="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm placeholder-gray-500 focus:outline-none focus:border-blue-500"
+              className="flex-1 px-3 py-2 bg-sw-bg3 border border-sw rounded-lg text-sw text-sm placeholder:text-sw3 focus:outline-none focus:border-sw-cyan"
             />
             <button
               data-testid="send-message-button"
               onClick={sendMessage}
               disabled={!input.trim() || loading}
-              className="px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+              className="px-3 py-2 bg-sw-cyan disabled:bg-sw3 disabled:cursor-not-allowed text-sw-bg rounded-lg transition-colors"
             >
               <Send className="w-4 h-4" />
             </button>
@@ -2483,26 +2426,31 @@ function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-950 relative overflow-hidden">
+      <div style={{minHeight:'100vh',background:'var(--bg)',position:'relative',overflow:'hidden'}}>
+        <canvas id="bg-canvas" />
+        <div className="grid-overlay" />
         <ParticleBackground />
         <div className="relative z-10 flex items-center justify-center min-h-screen">
           <div className="text-center">
             <div className="relative">
-              <div className="w-20 h-20 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 animate-spin mx-auto mb-6" style={{ animationDuration: '2s' }}>
-                <div className="absolute inset-2 bg-gray-950 rounded-full" />
+              <div className="w-20 h-20 rounded-full animate-spin mx-auto mb-6" style={{background:'linear-gradient(135deg, var(--cyan), var(--violet))',animationDuration:'2s'}}>
+                <div className="absolute inset-2 rounded-full" style={{background:'var(--bg)'}} />
               </div>
               <div className="absolute inset-0 flex items-center justify-center">
-                <span className="text-3xl">🐟</span>
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#00f5c4" strokeWidth="1.5">
+                  <circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8" opacity="0.3"/>
+                  <path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
+                </svg>
               </div>
             </div>
-            <h2 className="text-xl font-bold text-white mb-2">Initializing SwarmSim</h2>
-            <p className="text-gray-400 text-sm">Preparing your prediction engine...</p>
+            <h2 className="text-xl font-bold mb-2" style={{color:'var(--text)',fontFamily:'var(--display)'}}>Initializing SwarmSim</h2>
+            <p className="text-sm" style={{color:'var(--text2)'}}>Preparing your prediction engine...</p>
             <div className="mt-6 flex justify-center gap-1">
               {[0, 1, 2].map((i) => (
                 <div
                   key={i}
-                  className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"
-                  style={{ animationDelay: `${i * 0.15}s` }}
+                  className="w-2 h-2 rounded-full animate-bounce"
+                  style={{ background:'var(--cyan)', animationDelay: `${i * 0.15}s` }}
                 />
               ))}
             </div>
@@ -2514,18 +2462,20 @@ function App() {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-950 relative overflow-hidden">
+      <div style={{minHeight:'100vh',background:'var(--bg)',position:'relative',overflow:'hidden'}}>
+        <canvas id="bg-canvas" />
+        <div className="grid-overlay" />
         <ParticleBackground />
         <div className="relative z-10 flex items-center justify-center min-h-screen">
           <div className="text-center">
-            <div className="w-20 h-20 rounded-full bg-red-500/20 flex items-center justify-center mx-auto mb-4">
-              <AlertCircle className="w-10 h-10 text-red-400" />
+            <div className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4" style={{background:'rgba(255,71,87,0.15)'}}>
+              <AlertCircle className="w-10 h-10" style={{color:'var(--red)'}} />
             </div>
-            <h2 className="text-xl font-bold text-white mb-2">Connection Error</h2>
-            <p className="text-gray-400 mb-4">{error}</p>
+            <h2 className="text-xl font-bold mb-2" style={{color:'var(--text)',fontFamily:'var(--display)'}}>Connection Error</h2>
+            <p className="mb-4" style={{color:'var(--text2)'}}>{error}</p>
             <button
               onClick={() => window.location.reload()}
-              className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors"
+              className="btn-primary" style={{width:'auto',padding:'10px 24px'}}
             >
               Retry
             </button>
@@ -2536,22 +2486,21 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-950 relative overflow-hidden">
-      {/* Particle Background */}
+    <>
+      <canvas id="bg-canvas" />
+      <div className="grid-overlay" />
       <ParticleBackground />
-      
-      {/* Main Content */}
-      <div className="relative z-10">
+      <div className="app-shell">
         <Header onNewSimulation={handleNewSimulation} hasSession={!!sessionId} />
         
-        <main className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <StepIndicator
-            currentStep={currentStep}
-            completedSteps={completedSteps}
-            onStepClick={handleStepClick}
-          />
+        <StepIndicator
+          currentStep={currentStep}
+          completedSteps={completedSteps}
+          onStepClick={handleStepClick}
+        />
 
-          <div className="mt-6">
+        <main style={{flex:1,padding:'24px 16px',maxWidth:'1400px',margin:'0 auto',width:'100%'}}>
+          <div>
             {currentStep === 1 && (
               <UploadStep
                 sessionId={sessionId}
@@ -2583,17 +2532,26 @@ function App() {
               />
             )}
           
-          {currentStep === 5 && (
-            <ChatPanel
-              sessionId={sessionId}
-              agents={agents}
-              report={report}
-            />
-          )}
+            {currentStep === 5 && (
+              <ChatPanel
+                sessionId={sessionId}
+                agents={agents}
+                report={report}
+              />
+            )}
+          </div>
+        </main>
+
+        {/* Ticker Bar */}
+        <div className="ticker-bar">
+          <div className="ticker-item"><span className="ticker-lbl">NIFTY</span><span className="ticker-up">↑ 22,847</span></div>
+          <div className="ticker-item"><span className="ticker-lbl">BTC</span><span className="ticker-up">↑ $84,230</span></div>
+          <div className="ticker-item"><span className="ticker-lbl">SENSEX</span><span className="ticker-dn">↓ 75,142</span></div>
+          <div className="ticker-item"><span className="ticker-lbl">Sessions today</span><span style={{color:'var(--text2)'}}>—</span></div>
+          <div className="ticker-item"><span className="ticker-lbl">Engine</span><span style={{color:'var(--cyan)'}}>Online</span></div>
         </div>
-      </main>
       </div>
-    </div>
+    </>
   );
 }
 

@@ -2402,7 +2402,7 @@ const ChatPanel = ({ sessionId, agents, report }) => {
               <div
                 className={`max-w-[80%] px-3 py-2 rounded-2xl text-sm ${
                   msg.role === "user"
-                    ? "bg-sw-cyan text-sw rounded-tr-sm"
+                    ? "bg-sw-cyan text-sw-bg font-medium rounded-tr-sm"
                     : "bg-sw-bg3 text-sw2 rounded-tl-sm"
                 }`}
               >

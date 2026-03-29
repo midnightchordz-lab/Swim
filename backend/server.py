@@ -449,29 +449,38 @@ async def fetch_grok_twitter(topic: str, hours_back: int = 48) -> dict:
         from_date = datetime.now(timezone.utc) - timedelta(hours=hours_back)
         to_date = datetime.now(timezone.utc)
 
-        prompt = f"""Search X (Twitter) for posts about: "{topic}"
-Find high-engagement posts from the last {hours_back} hours.
+        prompt = f"""Search X (Twitter) for real posts about: "{topic}"
+from the last {hours_back} hours.
 
-Reply in EXACTLY this format, no extra text:
+Return REAL tweets from real accounts — exact text, real usernames.
+Do not paraphrase or summarise. Quote the actual posts directly.
+
+Reply in EXACTLY this format:
 
 INTEL_BRIEF:
-[2-3 sentences: what X is saying right now, dominant mood, key arguments]
+[2-3 sentences summarising what real X users are saying right now
+about this topic — dominant mood, key arguments, emerging narratives]
 
 SENTIMENT:
-positive: [number 0-100]
-negative: [number 0-100]
-neutral: [number 0-100]
+positive: [0-100]
+negative: [0-100]
+neutral: [0-100]
 
 TWEETS:
-AUTHOR: @username
-CONTENT: [tweet text max 200 chars]
+AUTHOR: @realusername
+CONTENT: [exact tweet text as posted, not paraphrased]
+LIKES: [number or unknown]
+RETWEETS: [number or unknown]
 STANCE: positive|negative|neutral
 ---
-AUTHOR: @username
-CONTENT: [tweet text]
+AUTHOR: @realusername
+CONTENT: [exact tweet text]
+LIKES: [number or unknown]
+RETWEETS: [number or unknown]
 STANCE: positive|negative|neutral
 ---
-[repeat for 8-12 diverse tweets, mix of perspectives]"""
+[8-12 tweets, real accounts, mix of verified/unverified,
+mix of retail/expert/media perspectives, no bots]"""
 
         loop = asyncio.get_running_loop()
 
@@ -511,9 +520,27 @@ STANCE: positive|negative|neutral
                 author_m = re.search(r'AUTHOR:\s*(.+)', block)
                 content_m = re.search(r'CONTENT:\s*(.+)', block, re.DOTALL)
                 stance_m = re.search(r'STANCE:\s*(\w+)', block)
+                likes_m = re.search(r'LIKES:\s*(.+)', block)
+                rt_m = re.search(r'RETWEETS:\s*(.+)', block)
+
+                def parse_num(m):
+                    if not m:
+                        return 0
+                    val = m.group(1).strip().lower()
+                    if val in ["unknown", "n/a", ""]:
+                        return 0
+                    try:
+                        val = val.replace(",", "").replace("k", "000").replace("m", "000000")
+                        return int(float(val))
+                    except Exception:
+                        return 0
+
+                likes = parse_num(likes_m)
+                retweets = parse_num(rt_m)
+
                 if content_m:
                     content = content_m.group(1).strip()
-                    for stop in ["STANCE:", "AUTHOR:", "---"]:
+                    for stop in ["LIKES:", "RETWEETS:", "STANCE:", "AUTHOR:", "---"]:
                         if stop in content:
                             content = content[:content.index(stop)].strip()
                     if len(content) > 15:
@@ -522,7 +549,11 @@ STANCE: positive|negative|neutral
                             "author": author_m.group(1).strip() if author_m else "X User",
                             "content": content[:280],
                             "stance": stance_m.group(1).lower() if stance_m else "neutral",
-                            "score": 60 if stance_m and stance_m.group(1).lower() != "neutral" else 20,
+                            "likes": likes,
+                            "retweets": retweets,
+                            "score": likes + (retweets * 3),
+                            "is_real": True,
+                            "verbatim": True,
                             "source": "grok_x_search"
                         })
 

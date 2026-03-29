@@ -1,69 +1,73 @@
-# SwarmSim - Swarm Intelligence Prediction Engine
+# SwarmSim - Product Requirements Document
 
 ## Original Problem Statement
-Build SwarmSim - a web application for AI-powered social prediction simulations. Users upload documents or use live intelligence mode, generate AI agent personas, run multi-round social media simulations, and get prediction reports.
+Build **SwarmSim**, a highly advanced Swarm Intelligence Prediction Engine. The application allows users to run complex AI agent simulations to predict outcomes on various topics (financial, political, social). Core features include real-time web scraping, RSS news parsing, live financial data (`yfinance`), a 6-agent Orchestrator pipeline, advanced AI behaviors, a Three-Tier Population Scaling System, and a 3-Tier LLM Cost Reduction Routing Strategy.
 
 ## Architecture
-- **Frontend**: React + Tailwind CSS + Recharts
-- **Backend**: FastAPI (Python) with dual agent architectures
-- **Database**: MongoDB (collections: sessions, sim_posts, graph_cache, agent_cache)
-- **LLM (Tiered Strategy)**:
-  - **Premium** (Sonnet 4): intel briefs, graph extraction, reports, agent generation
-  - **Fast** (Haiku 4.5): critic checks, chat, agent rebalance
-  - **Flash** (Gemini 2.5 Flash): simulation posts, replies, narratives, context compression
-- **Data Sources**: yfinance (market data), Google News RSS (news + social commentary), TwitterAPI.io (optional)
+- **Frontend**: React (monolithic App.js ~2500 lines) + Tailwind CSS + Shadcn/UI
+- **Backend**: FastAPI + MongoDB + Background Tasks
+- **LLM Integration**: Emergent Integrations Proxy (Claude Sonnet 4, Haiku 4.5, Gemini 2.5 Flash)
+- **Data Sources**: yfinance, Google News RSS (feedparser), web scraping
 
-### Key API Endpoints
-- POST /api/sessions — Create session
-- POST /api/sessions/{id}/fetch-live — Background live intel fetch (202)
-- POST /api/sessions/{id}/fetch-social-seed — Fetch real Reddit/Twitter/News comments (NEW)
-- POST /api/sessions/{id}/generate-agents — Background agent generation (202)
-- POST /api/sessions/{id}/configure-population — Three-tier population scaling
-- POST /api/sessions/{id}/simulate — Background simulation with Round 0 seed posts (202)
-- POST /api/sessions/{id}/extend — Add rounds to completed simulation
-- POST /api/sessions/{id}/generate-report — Progressive 2-phase report with real_vs_simulated
-- POST /api/sessions/{id}/chat — Chat with agents/report
+## Core Features (All Implemented)
+1. Document upload + Live Intelligence mode with real-time data fetching
+2. Knowledge Graph extraction (entities + relationships)
+3. AI Agent generation (10-300 personas with personalities, beliefs, influence)
+4. Three-Tier Population Scaling (LLM agents, statistical clones, silent population)
+5. Multi-round social media simulation with belief dynamics
+6. Real Social Media Comment Seeding (Google News RSS)
+7. Comprehensive prediction report with factions, risks, confidence scores
+8. PDF report download
+9. Interactive chat with agents post-simulation
+10. 3-Tier LLM Model Routing (Sonnet for premium, Haiku for fast, Gemini Flash for bulk)
+11. 12-point Cost Reduction optimizations
 
-### Cost Optimization (12 Changes)
-1. Three-tier model helpers (Premium/Fast/Flash)
-2. All LLM calls reassigned to correct cost tier
-3. Batched reply generation (1 call per round)
-4. Context compression after round 1
-5. Skip narratives for rounds 1-2
-6. MongoDB caching for graphs (24h) and agents (12h)
-7. Static personality templates
-8. Progressive 2-phase report
-9. Background critic check
-10. Simulation extend endpoint
-11. Frontend cost estimate + extend button
-12. Tightened defaults (10 agents, 3 rounds)
+## UI Design System (Implemented Feb 2026)
+- **Theme**: Dark cyberpunk (#06080f background, #00f5c4 cyan accent)
+- **Fonts**: Space Mono (monospace), Space Grotesk (body), Syne (headings)
+- **Effects**: Canvas particle background, grid overlay, glassmorphism (backdrop-blur)
+- **Components**: Glass cards, steps bar, stats row, info sidebar, ticker bar, scan animations
+- **Color tokens**: CSS variables (--bg, --cyan, --amber, --violet, --text, --text2, --text3)
 
-### Real Social Media Seeding (9 Changes)
-1. Reddit/News fetcher via Google News RSS (free, no key)
-2. Twitter fetcher via TwitterAPI.io (optional paid key)
-3. Nitter RSS fallback for Twitter
-4. POST /api/sessions/{id}/fetch-social-seed endpoint
-5. Social context injected into agent generation prompt
-6. Round 0 seed posts with is_real=true and post_type=real_seed
-7. Report includes real_vs_simulated sentiment comparison
-8. Frontend: Social Seed panel with sentiment breakdown
-9. Frontend: REAL badge on PostCards, Real vs Simulated panel in ReportView
+## Completed Tasks
+- [x] Core backend pipeline (6 agents + orchestrator)
+- [x] Document upload + graph extraction
+- [x] Live Intelligence mode (yfinance + web scraping)
+- [x] Agent generation with personality types
+- [x] Population scaling (3-tier)
+- [x] Multi-round simulation
+- [x] Real Social Media Comment Seeding
+- [x] Prediction reports + PDF download
+- [x] Interactive agent chat
+- [x] 3-Tier LLM Cost Reduction (Sonnet/Haiku/Gemini)
+- [x] 12-point cost optimization spec
+- [x] **UI Redesign** - Cyberpunk dark theme with glassmorphism (Feb 2026)
 
-## What's Implemented (All Complete)
-- Full 5-step wizard UI (Upload/Live Intel → Graph → Agents → Simulation → Report)
-- Live Intelligence Mode (web searches + Google News RSS + yfinance)
-- Background tasks + polling for all long-running ops
-- 6-agent Orchestrator pipeline
-- AI Enhancements: Bayesian beliefs, emotional contagion, network topology, herd detection
-- Three-Tier Population Scaling (LLM Agents → Clones → Silent Population)
-- 12-point cost optimization (tiered models, caching, batching, compression)
-- Real Social Media Comment Seeding (9 changes)
-- PDF report export with full-text fields
-- Entity types legend visibility fix
-- World context overflow fix
+## Backlog (Prioritized)
+### P1 - Upcoming
+- Session history to resume previous simulations
+- Graph zoom/pan controls for knowledge graph
 
-## Prioritized Backlog
-### P1: Session history, graph zoom/pan controls
-### P2: Entity search/filter, progress %, agent memory persistence
-### P3: Custom agents, simulation templates, shareable links
-### Refactoring: Split App.js (~2500+ lines) into components; consolidate backend agent folders
+### P2 - Future
+- Entity search/filter in knowledge graph
+- Progress percentage during long operations
+- Agent memory persistence across sessions
+- Refactor App.js into separate components (~2500 lines)
+
+### P3 - Nice to Have
+- Custom agent creation
+- Simulation templates
+- Shareable links
+
+## Known Issues
+- LLM Budget Exhaustion: If Emergent Universal Key balance is low, simulations will fail with 400 errors. User needs to top up via Profile > Universal Key > Add Balance.
+
+## Key API Endpoints
+- POST /api/sessions - Create session
+- POST /api/sessions/{id}/fetch-live - Fetch live data
+- POST /api/sessions/{id}/fetch-social-seed - Fetch social seed data
+- POST /api/sessions/{id}/generate-agents - Generate AI agents
+- POST /api/sessions/{id}/configure-population - Configure population tiers
+- POST /api/sessions/{id}/simulate - Run simulation
+- POST /api/sessions/{id}/extend - Extend simulation rounds
+- GET /api/sessions/{id}/report/pdf - Download PDF report

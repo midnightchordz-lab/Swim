@@ -614,6 +614,244 @@ Use real names, real numbers. No vague statements. No filler."""
 
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Stock Prediction Engine — Ticker Resolution + Technical Data
+# ═══════════════════════════════════════════════════════════════════════════
+
+import numpy as np
+
+try:
+    import yfinance as yf
+except ImportError:
+    yf = None
+
+STOCK_NAME_MAP = {
+    # India NSE
+    "reliance":"RELIANCE.NS","tcs":"TCS.NS","infosys":"INFY.NS",
+    "hdfc bank":"HDFCBANK.NS","hdfcbank":"HDFCBANK.NS",
+    "icici bank":"ICICIBANK.NS","icicibank":"ICICIBANK.NS",
+    "itc":"ITC.NS","wipro":"WIPRO.NS","sun pharma":"SUNPHARMA.NS",
+    "bajaj finance":"BAJFINANCE.NS","bajfinance":"BAJFINANCE.NS",
+    "axis bank":"AXISBANK.NS","axisbank":"AXISBANK.NS",
+    "kotak":"KOTAKBANK.NS","kotakbank":"KOTAKBANK.NS",
+    "maruti":"MARUTI.NS","titan":"TITAN.NS",
+    "hul":"HINDUNILVR.NS","hindustan unilever":"HINDUNILVR.NS",
+    "tata motors":"TATAMOTORS.NS","tatamotors":"TATAMOTORS.NS",
+    "dr reddy":"DRREDDY.NS","adani":"ADANIENT.NS",
+    "ongc":"ONGC.NS","ntpc":"NTPC.NS",
+    "sbi":"SBIN.NS","state bank":"SBIN.NS",
+    "lt":"LT.NS","larsen":"LT.NS",
+    "bharti airtel":"BHARTIARTL.NS","airtel":"BHARTIARTL.NS",
+    "nifty":"^NSEI","nifty 50":"^NSEI","nifty50":"^NSEI",
+    "sensex":"^BSESN","bank nifty":"^NSEBANK","banknifty":"^NSEBANK",
+    # US Stocks
+    "apple":"AAPL","microsoft":"MSFT","google":"GOOGL","alphabet":"GOOGL",
+    "amazon":"AMZN","tesla":"TSLA","nvidia":"NVDA","meta":"META",
+    "netflix":"NFLX","amd":"AMD","intel":"INTC","salesforce":"CRM",
+    "berkshire":"BRK-B","jpmorgan":"JPM","goldman":"GS",
+    "visa":"V","mastercard":"MA",
+    # US Indices
+    "sp500":"^GSPC","s&p 500":"^GSPC","s&p":"^GSPC",
+    "dow jones":"^DJI","dow":"^DJI","nasdaq composite":"^IXIC",
+    # Crypto
+    "bitcoin":"BTC-USD","btc":"BTC-USD","ethereum":"ETH-USD","eth":"ETH-USD",
+    "solana":"SOL-USD","sol":"SOL-USD","bnb":"BNB-USD",
+    "xrp":"XRP-USD","dogecoin":"DOGE-USD","doge":"DOGE-USD",
+    # Commodities
+    "gold":"GC=F","silver":"SI=F","crude oil":"CL=F","oil":"CL=F",
+    "natural gas":"NG=F",
+}
+
+
+async def resolve_ticker(query: str, graph: dict) -> list:
+    """Extract stock tickers from query + graph entities. Returns [{name, ticker, exchange}]."""
+    if not yf:
+        return []
+    found = []
+    q_lower = query.lower()
+    entities = [e.get("name", "").lower() for e in (graph.get("entities") or []) if isinstance(e, dict)]
+    search_text = q_lower + " " + " ".join(entities)
+
+    # Strategy 1: name map
+    for name, ticker in STOCK_NAME_MAP.items():
+        if name in search_text:
+            exchange = (
+                "NSE" if ".NS" in ticker else
+                "BSE" if ".BO" in ticker else
+                "INDEX" if "^" in ticker else
+                "CRYPTO" if "USD" in ticker else "US"
+            )
+            found.append({"name": name.title(), "ticker": ticker, "exchange": exchange})
+
+    # Strategy 2: explicit CAPS ticker patterns
+    skip_words = {"NIFTY","NSE","BSE","FII","DII","IPO","RBI","GDP","CPI","RSI","EMA","SMA","ATH","ATL","ETF"}
+    cap_patterns = re.findall(r'\b([A-Z]{2,10}(?:\.NS|\.BO|\.L)?)\b', query)
+    loop = asyncio.get_running_loop()
+    for pattern in cap_patterns:
+        if pattern.upper() in skip_words or any(t["ticker"].upper().startswith(pattern.upper()) for t in found):
+            continue
+        def _validate(t):
+            try:
+                obj = yf.Ticker(t)
+                fi = obj.fast_info
+                return hasattr(fi, "last_price") and fi.last_price and fi.last_price > 0
+            except Exception:
+                return False
+        for candidate in [pattern + ".NS", pattern]:
+            valid = await loop.run_in_executor(None, _validate, candidate)
+            if valid:
+                found.append({"name": pattern, "ticker": candidate, "exchange": "NSE" if ".NS" in candidate else "US"})
+                break
+
+    # Deduplicate
+    seen, unique = set(), []
+    for f in found:
+        if f["ticker"] not in seen:
+            seen.add(f["ticker"])
+            unique.append(f)
+    logger.info(f"[Ticker] Resolved: {[u['ticker'] for u in unique[:5]]}")
+    return unique[:5]
+
+
+async def fetch_stock_data_for_prediction(tickers: list) -> list:
+    """Fetch 60d OHLCV + MA5/MA20/RSI/support/resistance per ticker."""
+    if not yf:
+        return []
+    results = []
+    loop = asyncio.get_running_loop()
+
+    for ticker_info in tickers:
+        ticker = ticker_info["ticker"]
+        def _fetch(t, tinfo):
+            try:
+                stock = yf.Ticker(t)
+                hist = stock.history(period="70d", interval="1d", auto_adjust=True)
+                if hist.empty or len(hist) < 20:
+                    return None
+                closes = hist["Close"].values.astype(float)
+                volumes = hist["Volume"].values.astype(float)
+                highs = hist["High"].values.astype(float)
+                lows = hist["Low"].values.astype(float)
+
+                last_close = float(closes[-1])
+                prev_close = float(closes[-2])
+                change = last_close - prev_close
+                change_pct = (change / prev_close * 100) if prev_close else 0
+
+                ma5 = float(np.mean(closes[-5:]))
+                ma20 = float(np.mean(closes[-20:])) if len(closes) >= 20 else float(np.mean(closes))
+                avg_vol = float(np.mean(volumes[-20:])) if len(volumes) >= 20 else float(np.mean(volumes))
+                last_vol = float(volumes[-1])
+                vol_ratio = last_vol / avg_vol if avg_vol > 0 else 1.0
+
+                wk52_high = float(np.max(highs))
+                wk52_low = float(np.min(lows))
+                pct_from_high = ((last_close - wk52_high) / wk52_high * 100) if wk52_high else 0
+                pct_from_low = ((last_close - wk52_low) / wk52_low * 100) if wk52_low else 0
+
+                recent_highs = sorted(highs[-10:], reverse=True)
+                recent_lows = sorted(lows[-10:])
+                resistance = float(recent_highs[1]) if len(recent_highs) > 1 else float(recent_highs[0])
+                support = float(recent_lows[1]) if len(recent_lows) > 1 else float(recent_lows[0])
+
+                rsi = 50.0
+                if len(closes) >= 15:
+                    deltas = np.diff(closes[-15:])
+                    gains = deltas[deltas > 0]
+                    losses = deltas[deltas < 0]
+                    avg_gain = float(np.mean(gains)) if gains.size > 0 else 0.0
+                    avg_loss = float(np.mean(abs(losses))) if losses.size > 0 else 0.001
+                    if avg_loss == 0.0: avg_loss = 0.001
+                    rsi = round(100 - (100 / (1 + avg_gain / avg_loss)), 1)
+
+                above_ma5 = last_close > ma5
+                above_ma20 = last_close > ma20
+                trend = (
+                    "STRONG UPTREND" if above_ma5 and above_ma20 and change_pct > 0.5 else
+                    "UPTREND" if above_ma20 else
+                    "STRONG DOWNTREND" if not above_ma5 and not above_ma20 and change_pct < -0.5 else
+                    "DOWNTREND" if not above_ma20 else "MIXED"
+                )
+                rsi_signal = "OVERSOLD - bounce likely" if rsi < 30 else "OVERBOUGHT - pullback likely" if rsi > 70 else "NEUTRAL"
+                vol_signal = "HIGH VOLUME - strong conviction" if vol_ratio > 1.5 else "LOW VOLUME - weak conviction" if vol_ratio < 0.7 else "NORMAL VOLUME"
+
+                currency = "USD"
+                try:
+                    fi = stock.fast_info
+                    currency = getattr(fi, "currency", currency)
+                except Exception:
+                    if ".NS" in t or ".BO" in t: currency = "INR"
+
+                news_titles = []
+                try:
+                    for n in (stock.news or [])[:3]:
+                        title = n.get("title") or ""
+                        if title: news_titles.append(title)
+                except Exception:
+                    pass
+
+                return {
+                    "name": tinfo.get("name", t), "ticker": t,
+                    "exchange": tinfo.get("exchange", ""), "currency": currency.upper(),
+                    "last_close": round(last_close, 2), "prev_close": round(prev_close, 2),
+                    "change": round(change, 2), "change_pct": round(change_pct, 2),
+                    "ma5": round(ma5, 2), "ma20": round(ma20, 2),
+                    "above_ma5": bool(above_ma5), "above_ma20": bool(above_ma20),
+                    "volume": int(last_vol), "avg_volume_20d": int(avg_vol),
+                    "vol_ratio": round(vol_ratio, 2), "vol_signal": vol_signal,
+                    "wk52_high": round(wk52_high, 2), "wk52_low": round(wk52_low, 2),
+                    "pct_from_high": round(pct_from_high, 2), "pct_from_low": round(pct_from_low, 2),
+                    "support": round(support, 2), "resistance": round(resistance, 2),
+                    "rsi": rsi, "rsi_signal": rsi_signal, "trend": trend, "news": news_titles,
+                }
+            except Exception as e:
+                logger.error(f"[Market] Fetch error for {t}: {e}")
+                return None
+        data = await loop.run_in_executor(None, _fetch, ticker, ticker_info)
+        if data:
+            results.append(data)
+        await asyncio.sleep(0.1)
+    return results
+
+
+def build_market_context(stock_data: list) -> str:
+    """Build a text block of stock data for injection into LLM prompts."""
+    if not stock_data:
+        return ""
+    ccy_map = {"INR":"Rs","USD":"$","GBP":"GBP","EUR":"EUR","JPY":"JPY"}
+    lines = ["LIVE STOCK DATA - USE THESE EXACT NUMBERS:\n" + "=" * 55]
+    for s in stock_data:
+        ccy = ccy_map.get(s["currency"], s["currency"] + " ")
+        lines.append(f"""
+{s['name'].upper()} | {s['ticker']}
+Close:      {ccy}{s['last_close']:,.2f}  ({s['change']:+.2f} | {s['change_pct']:+.2f}%)
+Previous:   {ccy}{s['prev_close']:,.2f}
+MA5:        {ccy}{s['ma5']:,.2f}  ({'ABOVE-bullish' if s['above_ma5'] else 'BELOW-bearish'})
+MA20:       {ccy}{s['ma20']:,.2f}  ({'ABOVE-bullish' if s['above_ma20'] else 'BELOW-bearish'})
+Support:    {ccy}{s['support']:,.2f}
+Resistance: {ccy}{s['resistance']:,.2f}
+52W High:   {ccy}{s['wk52_high']:,.2f}  ({s['pct_from_high']:+.1f}% from high)
+52W Low:    {ccy}{s['wk52_low']:,.2f}  ({s['pct_from_low']:+.1f}% from low)
+RSI(14):    {s['rsi']} - {s['rsi_signal']}
+Volume:     {s['volume']:,} ({s['vol_ratio']:.1f}x 20d avg) - {s['vol_signal']}
+Trend:      {s['trend']}
+News:       {' | '.join(s['news'][:2]) if s['news'] else 'None'}""")
+    lines.append("\n" + "=" * 55)
+    lines.append("""
+PREDICTION RULES:
+1. Use EXACT prices above - never approximate
+2. UP target = resistance. DOWN target = support
+3. RSI < 30 = oversold -> bias UP. RSI > 70 = overbought -> bias DOWN
+4. Price above MA20 = bullish bias. Below = bearish bias
+5. Vol ratio > 1.5 = institutional activity - high conviction
+6. Within 2% of 52W high = potential reversal zone
+7. Within 5% of 52W low = potential bounce zone
+8. Use: "will likely", "expect", "target is" (not: may, could, might)
+""")
+    return "\n".join(lines)
+
+
+
 async def fetch_web_data(topic: str, horizon: str, session_id: str = None) -> dict:
     """Fetch live web data for a topic using DuckDuckGo search (5-8 queries covering multiple angles)"""
     import urllib.parse
@@ -2088,7 +2326,8 @@ async def run_background_critic(session_id: str, report: dict):
 
 @api_router.post("/sessions/{session_id}/generate-report")
 async def generate_report(session_id: str):
-    """Progressive 2-phase report: Phase 1 (Haiku, fast core) + Phase 2 (Sonnet, deep analysis)."""
+    """Progressive 2-phase report: Phase 1 (Haiku, fast core) + Phase 2 (Sonnet, deep analysis).
+    Now with live stock data injection for financial predictions."""
     session = await db.sessions.find_one({"id": session_id})
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -2115,10 +2354,17 @@ async def generate_report(session_id: str):
         for a in agents[:20]
     ])
 
-    # PHASE 1 — fast core report (Haiku, small)
+    # ── STEP 0: Resolve tickers + fetch live market data ──
+    tickers = await resolve_ticker(query, graph)
+    stock_data = await fetch_stock_data_for_prediction(tickers) if tickers else []
+    market_context = build_market_context(stock_data) if stock_data else ""
+    logger.info(f"[Report] Stock data for {len(stock_data)} tickers injected into report prompt")
+
+    # ── PHASE 1 — fast core report (Haiku, small) ──
     phase1_system = "You are a prediction analyst. Return ONLY valid JSON, no markdown."
     phase1_prompt = f"""Prediction: {query}
 Context: {graph.get('summary','')}
+{market_context}
 Agents ({len(agents)}):
 {agents_summary}
 Simulation ({session.get('total_rounds',3)} rounds):
@@ -2126,9 +2372,9 @@ Simulation ({session.get('total_rounds',3)} rounds):
 
 Return JSON with ONLY these fields:
 {{
-  "executive_summary": "3 sentences",
+  "executive_summary": "3 sentences. If stock data provided, cite exact prices and technical signals.",
   "prediction": {{
-    "outcome": "one sentence",
+    "outcome": "one sentence with specific price targets if stock data available",
     "confidence": "High|Medium|Low",
     "confidence_score": 0.65,
     "timeframe": "e.g. next month"
@@ -2148,9 +2394,10 @@ Return JSON with ONLY these fields:
         logger.error(f"Report phase 1 failed: {e}")
         raise HTTPException(status_code=500, detail=f"Report phase 1 failed: {str(e)}")
 
-    # PHASE 2 — deep analysis (Sonnet, medium)
+    # ── PHASE 2 — deep analysis (Sonnet, medium) ──
     phase2_system = "You are a senior analyst. Return ONLY valid JSON, no markdown."
     phase2_prompt = f"""Prediction: {query}
+{market_context}
 Simulation transcript:
 {transcript}
 
@@ -2190,6 +2437,10 @@ Return JSON with ONLY these fields:
         }
     }
     report.update({k: v for k, v in phase2.items() if k != "key_factions"})
+
+    # Attach live stock data to report for frontend + PDF
+    if stock_data:
+        report["stock_data"] = stock_data
 
     # Add real vs simulated sentiment comparison if social seed exists
     real_sentiment = session.get("social_seed_sentiment")
@@ -2244,7 +2495,7 @@ async def get_report(session_id: str):
 
 @api_router.get("/sessions/{session_id}/report/pdf")
 async def download_report_pdf(session_id: str):
-    """Download prediction report as PDF"""
+    """Download prediction report as PDF — uses multi_cell() throughout to prevent text truncation."""
     from fpdf import FPDF
     
     session = await db.sessions.find_one({"id": session_id}, {"_id": 0})
@@ -2257,139 +2508,136 @@ async def download_report_pdf(session_id: str):
     query = session.get("prediction_query", "N/A")
     
     def safe_text(text, max_len=800):
-        """Sanitize text for PDF output - removes Unicode characters not supported by Helvetica"""
+        """Sanitize text for PDF output"""
         if not text:
             return "N/A"
-        # Handle lists/arrays by joining them
         if isinstance(text, list):
             text = "; ".join(str(item) for item in text)
         text = str(text)
-        
-        # Replace common Unicode characters with ASCII equivalents
         replacements = {
-            '—': '-',  # em-dash
-            '–': '-',  # en-dash
-            '"': '"',  # left double quote
-            '"': '"',  # right double quote
-            ''': "'",  # left single quote
-            ''': "'",  # right single quote
-            '…': '...',  # ellipsis
-            '•': '*',  # bullet
-            '→': '->',  # arrow
-            '←': '<-',
-            '↔': '<->',
-            '≈': '~',
-            '≠': '!=',
-            '≤': '<=',
-            '≥': '>=',
-            '×': 'x',
-            '÷': '/',
-            '±': '+/-',
-            '°': ' degrees',
-            '©': '(c)',
-            '®': '(R)',
-            '™': '(TM)',
-            '\u00a0': ' ',  # non-breaking space
+            '\u2014': '-', '\u2013': '-', '\u201c': '"', '\u201d': '"',
+            '\u2018': "'", '\u2019': "'", '\u2026': '...', '\u2022': '*',
+            '\u2192': '->', '\u2190': '<-', '\u2248': '~', '\u2260': '!=',
+            '\u2264': '<=', '\u2265': '>=', '\u00d7': 'x', '\u00f7': '/',
+            '\u00b1': '+/-', '\u00b0': ' deg', '\u00a9': '(c)', '\u00ae': '(R)',
+            '\u2122': '(TM)', '\u00a0': ' ',
         }
-        for unicode_char, ascii_char in replacements.items():
-            text = text.replace(unicode_char, ascii_char)
-        
-        # Remove newlines and tabs
+        for u, a in replacements.items():
+            text = text.replace(u, a)
         text = text.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
-        
-        # Keep only ASCII printable characters
         text = ''.join(c if (ord(c) < 128 and c.isprintable()) or c == ' ' else '' for c in text)
-        
-        # Clean up multiple spaces
         while '  ' in text:
             text = text.replace('  ', ' ')
-        
         if len(text) > max_len:
             text = text[:max_len] + "..."
         return text.strip() or "N/A"
     
-    # Create PDF
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     
-    # Title
+    # ── Title ──
     pdf.set_font("Helvetica", "B", 24)
-    pdf.set_text_color(30, 64, 175)  # Blue
+    pdf.set_text_color(0, 80, 60)
     pdf.cell(0, 15, "SwarmSim Prediction Report", ln=True, align="C")
     pdf.ln(5)
     
-    # Prediction Question
+    # ── Question ──
     pdf.set_font("Helvetica", "I", 11)
     pdf.set_text_color(100, 100, 100)
     pdf.multi_cell(190, 6, f"Question: {safe_text(query, 300)}")
-    pdf.ln(5)
-    
-    # Generated Date
+    pdf.ln(3)
     pdf.set_font("Helvetica", "", 9)
     pdf.cell(0, 5, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}", ln=True)
-    pdf.ln(10)
+    pdf.ln(8)
     
-    # Prediction Outcome Box
-    pdf.set_fill_color(240, 249, 255)  # Light blue background
-    pdf.set_draw_color(59, 130, 246)  # Blue border
-    pdf.rect(10, pdf.get_y(), 190, 35, style="DF")
-    
-    pdf.set_xy(15, pdf.get_y() + 5)
-    pdf.set_font("Helvetica", "B", 14)
-    pdf.set_text_color(30, 64, 175)
-    pdf.cell(0, 8, "PREDICTED OUTCOME", ln=True)
-    
+    # ── Prediction Outcome Box ──
+    pdf.set_fill_color(235, 250, 245)
+    pdf.set_draw_color(0, 180, 140)
+    y_box = pdf.get_y()
+    outcome = safe_text(report.get("prediction", {}).get("outcome", "N/A"), 400)
+    # Estimate box height
+    box_h = max(30, 10 + len(outcome) // 80 * 6 + 14)
+    pdf.rect(10, y_box, 190, box_h, style="DF")
+    pdf.set_xy(15, y_box + 4)
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.set_text_color(0, 80, 60)
+    pdf.cell(0, 7, "PREDICTED OUTCOME", ln=True)
     pdf.set_x(15)
     pdf.set_font("Helvetica", "", 11)
     pdf.set_text_color(0, 0, 0)
-    outcome = safe_text(report.get("prediction", {}).get("outcome", "N/A"), 300)
     pdf.multi_cell(180, 6, outcome)
+    pdf.set_y(y_box + box_h + 6)
     
-    pdf.ln(15)
-    
-    # Confidence Score
+    # ── Confidence ──
     prediction = report.get("prediction", {})
     confidence = prediction.get("confidence", "N/A")
     score = prediction.get("confidence_score", 0) or 0
     timeframe = safe_text(prediction.get("timeframe", "N/A"), 50)
-    
     pdf.set_font("Helvetica", "B", 12)
     pdf.set_text_color(0, 0, 0)
     pdf.cell(60, 8, f"Confidence: {confidence} ({int(score * 100)}%)")
     pdf.cell(60, 8, f"Timeframe: {timeframe}", ln=True)
-    pdf.ln(8)
+    pdf.ln(6)
     
-    # Executive Summary
+    # ── Stock Data Section ──
+    stock_data = report.get("stock_data", [])
+    if stock_data:
+        pdf.set_font("Helvetica", "B", 14)
+        pdf.set_text_color(0, 80, 60)
+        pdf.cell(0, 10, "Live Market Data", ln=True)
+        pdf.set_text_color(0, 0, 0)
+        ccy_map = {"INR": "Rs", "USD": "$", "GBP": "GBP", "EUR": "EUR"}
+        for s in stock_data:
+            ccy = ccy_map.get(s.get("currency", ""), "")
+            change_color = (0, 130, 80) if s.get("change_pct", 0) >= 0 else (200, 40, 40)
+            
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.cell(60, 7, f"{s['name']} ({s['ticker']})")
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.cell(40, 7, f"{ccy}{s['last_close']:,.2f}")
+            pdf.set_text_color(*change_color)
+            pdf.cell(30, 7, f"{s['change_pct']:+.2f}%")
+            pdf.set_text_color(0, 0, 0)
+            pdf.cell(0, 7, f"RSI: {s.get('rsi', 'N/A')} | {s.get('trend', '')}", ln=True)
+            
+            pdf.set_font("Helvetica", "", 9)
+            pdf.cell(0, 5, f"  MA5: {ccy}{s.get('ma5',0):,.2f}  |  MA20: {ccy}{s.get('ma20',0):,.2f}  |  Support: {ccy}{s.get('support',0):,.2f}  |  Resistance: {ccy}{s.get('resistance',0):,.2f}", ln=True)
+            pdf.cell(0, 5, f"  52W Range: {ccy}{s.get('wk52_low',0):,.2f} - {ccy}{s.get('wk52_high',0):,.2f}  |  Vol: {s.get('volume',0):,} ({s.get('vol_ratio',0):.1f}x avg)  |  {s.get('vol_signal','')}", ln=True)
+            
+            if s.get("news"):
+                for n in s["news"][:2]:
+                    pdf.set_font("Helvetica", "I", 8)
+                    pdf.set_text_color(80, 80, 80)
+                    pdf.multi_cell(190, 4, f"  News: {safe_text(n, 200)}")
+                    pdf.set_text_color(0, 0, 0)
+            pdf.ln(3)
+        pdf.ln(4)
+    
+    # ── Executive Summary ──
     pdf.set_font("Helvetica", "B", 14)
-    pdf.set_text_color(30, 64, 175)
+    pdf.set_text_color(0, 80, 60)
     pdf.cell(0, 10, "Executive Summary", ln=True)
     pdf.set_font("Helvetica", "", 11)
     pdf.set_text_color(0, 0, 0)
-    summary = safe_text(report.get("executive_summary", "N/A"), 800)
-    pdf.multi_cell(190, 6, summary)
-    pdf.ln(8)
+    pdf.multi_cell(190, 6, safe_text(report.get("executive_summary", "N/A"), 1200))
+    pdf.ln(6)
     
-    # Opinion Landscape
+    # ── Opinion Landscape ──
     opinion = report.get("opinion_landscape", {})
     pdf.set_font("Helvetica", "B", 14)
-    pdf.set_text_color(30, 64, 175)
+    pdf.set_text_color(0, 80, 60)
     pdf.cell(0, 10, "Opinion Landscape", ln=True)
-    
     pdf.set_font("Helvetica", "", 11)
     pdf.set_text_color(0, 0, 0)
-    support = opinion.get("support_percentage", 0) or 0
-    opposition = opinion.get("opposition_percentage", 0) or 0
-    undecided = opinion.get("undecided_percentage", 0) or 0
     sentiment = safe_text(opinion.get("dominant_sentiment", "N/A"), 50)
-    
     pdf.cell(0, 6, f"Dominant Sentiment: {sentiment.title()}", ln=True)
-    pdf.cell(60, 6, f"Support: {support}%")
-    pdf.cell(60, 6, f"Opposition: {opposition}%")
-    pdf.cell(60, 6, f"Undecided: {undecided}%", ln=True)
-    pdf.ln(5)
+    pdf.cell(60, 6, f"Support: {opinion.get('support_percentage', 0)}%")
+    pdf.cell(60, 6, f"Opposition: {opinion.get('opposition_percentage', 0)}%")
+    pdf.cell(60, 6, f"Undecided: {opinion.get('undecided_percentage', 0)}%", ln=True)
+    pdf.ln(4)
     
-    # Key Factions
+    # ── Key Factions ──
     factions = opinion.get("key_factions", [])
     if factions:
         pdf.set_font("Helvetica", "B", 12)
@@ -2401,18 +2649,18 @@ async def download_report_pdf(session_id: str):
             stance = safe_text(faction.get('stance', 'N/A'), 300)
             arguments = safe_text(faction.get('key_arguments', []), 400)
             pdf.set_font("Helvetica", "B", 10)
-            pdf.cell(0, 6, f"- {name} ({size})", ln=True)
+            pdf.multi_cell(190, 6, f"- {name} ({size})")
             pdf.set_font("Helvetica", "", 10)
             pdf.multi_cell(190, 5, f"  {stance}")
             if arguments and arguments != "N/A":
                 pdf.multi_cell(190, 5, f"  Arguments: {arguments}")
-    pdf.ln(5)
+    pdf.ln(4)
     
-    # Risk Factors
+    # ── Risk Factors ──
     risks = report.get("risk_factors", [])
     if risks:
         pdf.set_font("Helvetica", "B", 14)
-        pdf.set_text_color(220, 38, 38)  # Red
+        pdf.set_text_color(200, 40, 40)
         pdf.cell(0, 10, "Risk Factors", ln=True)
         pdf.set_font("Helvetica", "", 10)
         pdf.set_text_color(0, 0, 0)
@@ -2421,16 +2669,16 @@ async def download_report_pdf(session_id: str):
             factor = safe_text(risk.get("factor", "N/A"), 300)
             impact = safe_text(risk.get("impact", "N/A"), 400)
             pdf.set_font("Helvetica", "B", 10)
-            pdf.cell(0, 6, f"[{likelihood}] {factor}", ln=True)
+            pdf.multi_cell(190, 6, f"[{likelihood}] {factor}")
             pdf.set_font("Helvetica", "", 10)
             pdf.multi_cell(190, 5, f"  Impact: {impact}")
-        pdf.ln(5)
+        pdf.ln(4)
     
-    # Key Turning Points
+    # ── Key Turning Points ──
     turning_points = report.get("key_turning_points", [])
     if turning_points:
         pdf.set_font("Helvetica", "B", 14)
-        pdf.set_text_color(30, 64, 175)
+        pdf.set_text_color(0, 80, 60)
         pdf.cell(0, 10, "Key Turning Points", ln=True)
         pdf.set_font("Helvetica", "", 10)
         pdf.set_text_color(0, 0, 0)
@@ -2439,16 +2687,16 @@ async def download_report_pdf(session_id: str):
             description = safe_text(point.get('description', 'N/A'), 300)
             impact = safe_text(point.get('impact', 'N/A'), 400)
             pdf.set_font("Helvetica", "B", 10)
-            pdf.cell(0, 6, f"Round {round_num}: {description}", ln=True)
+            pdf.multi_cell(190, 6, f"Round {round_num}: {description}")
             pdf.set_font("Helvetica", "", 10)
             pdf.multi_cell(190, 5, f"  Impact: {impact}")
-        pdf.ln(5)
+        pdf.ln(4)
     
-    # Alternative Scenarios
+    # ── Alternative Scenarios ──
     scenarios = report.get("alternative_scenarios", [])
     if scenarios:
         pdf.set_font("Helvetica", "B", 14)
-        pdf.set_text_color(30, 64, 175)
+        pdf.set_text_color(0, 80, 60)
         pdf.cell(0, 10, "Alternative Scenarios", ln=True)
         pdf.set_font("Helvetica", "", 10)
         pdf.set_text_color(0, 0, 0)
@@ -2457,23 +2705,23 @@ async def download_report_pdf(session_id: str):
             scenario_name = safe_text(scenario.get('scenario', 'N/A'), 200)
             conditions = safe_text(scenario.get('conditions', 'N/A'), 400)
             pdf.set_font("Helvetica", "B", 10)
-            pdf.cell(0, 6, f"{scenario_name} ({int(prob * 100)}% probability)", ln=True)
+            pdf.multi_cell(190, 6, f"{scenario_name} ({int(prob * 100)}% probability)")
             pdf.set_font("Helvetica", "", 10)
             pdf.multi_cell(190, 5, f"  Conditions: {conditions}")
-        pdf.ln(5)
+        pdf.ln(4)
     
-    # Agent Highlights
+    # ── Agent Highlights ──
     highlights = report.get("agent_highlights", [])
     if highlights:
         pdf.set_font("Helvetica", "B", 14)
-        pdf.set_text_color(30, 64, 175)
+        pdf.set_text_color(0, 80, 60)
         pdf.cell(0, 10, "Agent Highlights", ln=True)
         pdf.set_font("Helvetica", "", 10)
         pdf.set_text_color(0, 0, 0)
         for highlight in highlights:
             pdf.set_font("Helvetica", "B", 10)
             name = safe_text(highlight.get('agent_name', 'N/A'), 80)
-            pdf.cell(0, 6, f"- {name}", ln=True)
+            pdf.multi_cell(190, 6, f"- {name}")
             pdf.set_font("Helvetica", "", 10)
             role = safe_text(highlight.get('role_in_simulation', 'N/A'), 300)
             pdf.multi_cell(190, 5, f"Role: {role}")
@@ -2484,19 +2732,19 @@ async def download_report_pdf(session_id: str):
                 pdf.set_font("Helvetica", "", 10)
             pdf.ln(2)
     
-    # Footer
+    # ── Footer ──
     pdf.ln(10)
     pdf.set_font("Helvetica", "I", 8)
     pdf.set_text_color(150, 150, 150)
     pdf.cell(0, 5, "Generated by SwarmSim - Swarm Intelligence Prediction Engine", ln=True, align="C")
+    if stock_data:
+        pdf.cell(0, 5, f"Market data as of {datetime.now().strftime('%Y-%m-%d %H:%M UTC')} via yfinance", ln=True, align="C")
     
-    # Output PDF to bytes
     pdf_output = io.BytesIO()
     pdf_bytes = pdf.output()
     pdf_output.write(pdf_bytes)
     pdf_output.seek(0)
     
-    # Create filename
     filename = f"swarmsim_report_{session_id[:8]}_{datetime.now().strftime('%Y%m%d')}.pdf"
     
     return StreamingResponse(

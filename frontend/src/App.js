@@ -2035,6 +2035,51 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
         )}
       </div>
 
+      {/* Live Stock Data */}
+      {report.stock_data && report.stock_data.length > 0 && (
+        <div data-testid="stock-data-section" className="glass-card" style={{padding:'16px'}}>
+          <h3 className="text-sm font-bold mb-3" style={{color:'var(--text)',fontFamily:'var(--display)'}}>
+            Live Market Data
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {report.stock_data.map((s, i) => {
+              const ccy = {INR:'Rs ',USD:'$',GBP:'GBP ',EUR:'EUR '}[s.currency] || (s.currency + ' ');
+              const isUp = s.change_pct >= 0;
+              return (
+                <div key={i} className="rounded-xl p-3" style={{background:'var(--bg3)',border:'1px solid var(--border)'}}>
+                  <div className="flex items-center justify-between mb-2">
+                    <div>
+                      <div className="text-xs font-bold" style={{color:'var(--text)'}}>{s.name}</div>
+                      <div className="text-[10px] mono" style={{color:'var(--text3)'}}>{s.ticker} · {s.exchange}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm font-bold mono" style={{color:'var(--text)'}}>{ccy}{s.last_close?.toLocaleString()}</div>
+                      <div className="text-[10px] font-semibold mono" style={{color: isUp ? 'var(--cyan)' : 'var(--red)'}}>
+                        {isUp ? '+' : ''}{s.change_pct?.toFixed(2)}%
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[10px]" style={{color:'var(--text2)'}}>
+                    <div>MA5: <span className="mono" style={{color: s.above_ma5 ? 'var(--cyan)' : 'var(--red)'}}>{ccy}{s.ma5?.toLocaleString()}</span></div>
+                    <div>MA20: <span className="mono" style={{color: s.above_ma20 ? 'var(--cyan)' : 'var(--red)'}}>{ccy}{s.ma20?.toLocaleString()}</span></div>
+                    <div>Support: <span className="mono">{ccy}{s.support?.toLocaleString()}</span></div>
+                    <div>Resist: <span className="mono">{ccy}{s.resistance?.toLocaleString()}</span></div>
+                    <div>RSI: <span className="mono" style={{color: s.rsi < 30 ? 'var(--cyan)' : s.rsi > 70 ? 'var(--red)' : 'var(--text2)'}}>{s.rsi}</span></div>
+                    <div>Vol: <span className="mono">{s.vol_ratio?.toFixed(1)}x</span></div>
+                  </div>
+                  <div className="mt-2 text-[10px] font-semibold px-2 py-1 rounded text-center" style={{
+                    background: s.trend?.includes('UP') ? 'rgba(0,245,196,0.1)' : s.trend?.includes('DOWN') ? 'rgba(255,71,87,0.1)' : 'rgba(107,114,128,0.1)',
+                    color: s.trend?.includes('UP') ? 'var(--cyan)' : s.trend?.includes('DOWN') ? 'var(--red)' : 'var(--text2)'
+                  }}>
+                    {s.trend}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Simulation Story Arc & AI Insights */}
       {sessionMeta && (sessionMeta.round_narratives?.length > 0 || sessionMeta.emotional_summary) && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">

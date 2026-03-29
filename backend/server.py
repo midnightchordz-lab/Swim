@@ -23,6 +23,16 @@ import urllib.parse
 import base64
 import httpx
 
+# xAI/Grok SDK
+try:
+    from xai_sdk import Client as XAIClient
+    from xai_sdk.chat import user as xai_user
+    from xai_sdk.tools import x_search as xai_x_search
+    from xai_sdk.tools import web_search as xai_web_search
+    XAI_AVAILABLE = True
+except ImportError:
+    XAI_AVAILABLE = False
+
 from agents import (
     check_herd, score_diversity, get_missing_personalities,
     initialise_beliefs, update_beliefs, get_belief_summary,
@@ -422,6 +432,157 @@ def _analyse_real_sentiment(comments: list) -> dict:
     }
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Grok (xAI) integration — Real Twitter/X data + Web intelligence
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def fetch_grok_twitter(topic: str, hours_back: int = 48) -> dict:
+    """Fetch real X/Twitter posts using Grok's native x_search tool.
+    No Twitter API key needed — just XAI_API_KEY."""
+    xai_key = os.environ.get("XAI_API_KEY")
+    if not xai_key or not XAI_AVAILABLE:
+        logger.warning("[Grok] XAI_API_KEY not set or xai-sdk not available")
+        return {"tweets": [], "intel_brief": "", "sentiment": {}, "available": False}
+
+    try:
+        client = XAIClient(api_key=xai_key)
+        from_date = datetime.now(timezone.utc) - timedelta(hours=hours_back)
+        to_date = datetime.now(timezone.utc)
+
+        prompt = f"""Search X (Twitter) for posts about: "{topic}"
+Find high-engagement posts from the last {hours_back} hours.
+
+Reply in EXACTLY this format, no extra text:
+
+INTEL_BRIEF:
+[2-3 sentences: what X is saying right now, dominant mood, key arguments]
+
+SENTIMENT:
+positive: [number 0-100]
+negative: [number 0-100]
+neutral: [number 0-100]
+
+TWEETS:
+AUTHOR: @username
+CONTENT: [tweet text max 200 chars]
+STANCE: positive|negative|neutral
+---
+AUTHOR: @username
+CONTENT: [tweet text]
+STANCE: positive|negative|neutral
+---
+[repeat for 8-12 diverse tweets, mix of perspectives]"""
+
+        loop = asyncio.get_running_loop()
+
+        def _call():
+            chat = client.chat.create(
+                model="grok-4-1-fast",
+                tools=[xai_x_search(from_date=from_date, to_date=to_date)],
+            )
+            chat.append(xai_user(prompt))
+            return chat.sample()
+
+        response = await loop.run_in_executor(None, _call)
+        raw = response.content or ""
+
+        # Parse intel brief
+        intel_brief = ""
+        if "INTEL_BRIEF:" in raw:
+            start = raw.index("INTEL_BRIEF:") + len("INTEL_BRIEF:")
+            end = raw.index("SENTIMENT:") if "SENTIMENT:" in raw else start + 400
+            intel_brief = raw[start:end].strip()
+
+        # Parse sentiment
+        sentiment = {"positive": 33, "negative": 33, "neutral": 34}
+        for key in ["positive", "negative", "neutral"]:
+            m = re.search(rf'{key}:\s*(\d+)', raw, re.IGNORECASE)
+            if m:
+                sentiment[key] = int(m.group(1))
+
+        # Parse individual tweets
+        tweets = []
+        if "TWEETS:" in raw:
+            section = raw[raw.index("TWEETS:") + len("TWEETS:"):]
+            for block in section.split("---"):
+                block = block.strip()
+                if not block:
+                    continue
+                author_m = re.search(r'AUTHOR:\s*(.+)', block)
+                content_m = re.search(r'CONTENT:\s*(.+)', block, re.DOTALL)
+                stance_m = re.search(r'STANCE:\s*(\w+)', block)
+                if content_m:
+                    content = content_m.group(1).strip()
+                    for stop in ["STANCE:", "AUTHOR:", "---"]:
+                        if stop in content:
+                            content = content[:content.index(stop)].strip()
+                    if len(content) > 15:
+                        tweets.append({
+                            "platform": "Twitter",
+                            "author": author_m.group(1).strip() if author_m else "X User",
+                            "content": content[:280],
+                            "stance": stance_m.group(1).lower() if stance_m else "neutral",
+                            "score": 60 if stance_m and stance_m.group(1).lower() != "neutral" else 20,
+                            "source": "grok_x_search"
+                        })
+
+        logger.info(f"[Grok] {len(tweets)} tweets fetched for '{topic}'")
+        return {
+            "tweets": tweets,
+            "intel_brief": intel_brief,
+            "sentiment": sentiment,
+            "available": True,
+            "source": "grok_x_search",
+            "hours_searched": hours_back
+        }
+
+    except Exception as e:
+        logger.error(f"[Grok] x_search error: {e}")
+        return {"tweets": [], "intel_brief": "", "sentiment": {}, "available": False, "error": str(e)}
+
+
+async def fetch_grok_web_intel(topic: str, horizon: str = "next week") -> dict:
+    """Use Grok with live web_search to build a real-time intelligence brief."""
+    xai_key = os.environ.get("XAI_API_KEY")
+    if not xai_key or not XAI_AVAILABLE:
+        logger.warning("[Grok] XAI_API_KEY not set or xai-sdk not available for web intel")
+        return {"brief": "", "available": False}
+
+    try:
+        client = XAIClient(api_key=xai_key)
+        loop = asyncio.get_running_loop()
+
+        def _call():
+            chat = client.chat.create(
+                model="grok-4-1-fast",
+                tools=[xai_web_search()],
+            )
+            chat.append(xai_user(
+                f"""Search for the very latest news about: "{topic}"
+Relevant to predicting outcomes over: {horizon}
+Focus on the last 72 hours only.
+
+Write a 200-word intelligence brief with these sections:
+1. Current situation — specific facts, numbers, prices, dates
+2. Key players and their positions — 2-3 sentences
+3. Main risks and opportunities — 2-3 sentences
+4. What to watch for {horizon} — 1-2 sentences
+
+Use real names, real numbers. No vague statements. No filler."""
+            ))
+            return chat.sample()
+
+        response = await loop.run_in_executor(None, _call)
+        brief = (response.content or "").strip()
+        logger.info(f"[Grok] Web intel brief: {len(brief)} chars")
+        return {"brief": brief, "available": True, "source": "grok_web_search"}
+
+    except Exception as e:
+        logger.error(f"[Grok] web_search error: {e}")
+        return {"brief": "", "available": False, "error": str(e)}
+
+
+
 async def fetch_web_data(topic: str, horizon: str, session_id: str = None) -> dict:
     """Fetch live web data for a topic using DuckDuckGo search (5-8 queries covering multiple angles)"""
     import urllib.parse
@@ -728,7 +889,12 @@ async def parse_document(file: UploadFile) -> tuple[str, dict]:
 # API Endpoints
 @api_router.get("/health")
 async def health_check():
-    return {"status": "ok"}
+    grok_ready = bool(os.environ.get("XAI_API_KEY") and XAI_AVAILABLE)
+    return {
+        "status": "ok",
+        "grok_available": grok_ready,
+        "twitter_source": "Grok X Search" if grok_ready else "Nitter RSS fallback",
+    }
 
 
 @api_router.post("/sessions", response_model=SessionResponse)
@@ -831,7 +997,25 @@ async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_q
         # Fetch web search data (8 queries with progress tracking)
         web_data = await fetch_web_data(topic, horizon, session_id=session_id)
 
-        if not web_data.get("results") and not financial_data.get("has_data"):
+        # Also try Grok web intel in parallel (enhances the brief)
+        grok_web_result = await fetch_grok_web_intel(topic, horizon)
+        grok_web_brief = grok_web_result.get("brief", "") if grok_web_result.get("available") else ""
+
+        # Also fetch real Twitter via Grok to seed into the session
+        grok_twitter_result = await fetch_grok_twitter(topic, hours_back=48)
+        if grok_twitter_result.get("available") and grok_twitter_result.get("tweets"):
+            await db.sessions.update_one(
+                {"id": session_id},
+                {"$set": {
+                    "social_seed": grok_twitter_result["tweets"],
+                    "social_seed_sentiment": grok_twitter_result.get("sentiment", {}),
+                    "social_seed_sources": ["X/Twitter via Grok"],
+                    "social_seed_brief": grok_twitter_result.get("intel_brief", ""),
+                }}
+            )
+            logger.info(f"[Live] Grok Twitter seeded: {len(grok_twitter_result['tweets'])} posts")
+
+        if not web_data.get("results") and not financial_data.get("has_data") and not grok_web_brief:
             await db.sessions.update_one(
                 {"id": session_id},
                 {"$set": {"live_fetch_status": "failed", "live_fetch_error": "Could not fetch live data. Please try a different topic."}}
@@ -841,6 +1025,10 @@ async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_q
         # Build contexts for the orchestrator
         context_parts = [f"- {r['title']}: {r['snippet']}" for r in web_data["results"][:20]]
         web_context = "\n".join(context_parts)
+
+        # Prepend Grok web intel brief if available (higher quality, more current)
+        if grok_web_brief:
+            web_context = f"=== GROK REAL-TIME WEB INTELLIGENCE ===\n{grok_web_brief}\n=== END GROK INTEL ===\n\n{web_context}"
 
         financial_context = ""
         if financial_data.get("has_data"):
@@ -1261,13 +1449,29 @@ async def fetch_social_seed(session_id: str, request: SocialSeedRequest):
         except Exception as e:
             logger.error(f"[SocialSeed] Reddit error: {e}")
 
+    grok_brief = ""
+    grok_sentiment = {}
+    grok_twitter_fetched = False
+
     if request.include_twitter:
-        twitter_comments = await fetch_twitter_comments(topic, limit=20)
-        if not twitter_comments:
-            twitter_comments = await fetch_nitter_rss(topic, limit=15)
-        all_comments.extend(twitter_comments)
-        if twitter_comments:
-            sources_fetched.append(f"Twitter ({len(twitter_comments)} tweets)")
+        # Priority 1: Grok X Search (real tweets)
+        grok_result = await fetch_grok_twitter(topic, hours_back=48)
+        if grok_result.get("available") and grok_result.get("tweets"):
+            all_comments.extend(grok_result["tweets"])
+            grok_brief = grok_result.get("intel_brief", "")
+            grok_sentiment = grok_result.get("sentiment", {})
+            grok_twitter_fetched = True
+            sources_fetched.append(f"X/Twitter via Grok ({len(grok_result['tweets'])} posts)")
+            logger.info(f"[SocialSeed] Grok fetched {len(grok_result['tweets'])} tweets")
+        else:
+            # Fallback: existing Twitter + Nitter path
+            logger.info("[SocialSeed] Grok unavailable — falling back to Twitter/Nitter")
+            twitter_comments = await fetch_twitter_comments(topic, limit=20)
+            if not twitter_comments:
+                twitter_comments = await fetch_nitter_rss(topic, limit=15)
+            all_comments.extend(twitter_comments)
+            if twitter_comments:
+                sources_fetched.append(f"Twitter ({len(twitter_comments)} tweets)")
 
     if not all_comments:
         return {
@@ -1280,7 +1484,7 @@ async def fetch_social_seed(session_id: str, request: SocialSeedRequest):
 
     all_comments.sort(key=lambda x: x.get("score", 0), reverse=True)
     top_comments = all_comments[:request.max_comments]
-    real_sentiment = _analyse_real_sentiment(top_comments)
+    real_sentiment = grok_sentiment if grok_twitter_fetched and grok_sentiment else _analyse_real_sentiment(top_comments)
 
     await db.sessions.update_one(
         {"id": session_id},
@@ -1288,15 +1492,20 @@ async def fetch_social_seed(session_id: str, request: SocialSeedRequest):
             "social_seed": top_comments,
             "social_seed_sentiment": real_sentiment,
             "social_seed_sources": sources_fetched,
+            "social_seed_brief": grok_brief,
             "updated_at": datetime.now(timezone.utc).isoformat()
         }}
     )
+
+    powered_by = "Grok X Search" if grok_twitter_fetched else "Reddit + Nitter fallback"
 
     return {
         "comments_fetched": len(top_comments),
         "sources": sources_fetched,
         "real_sentiment": real_sentiment,
+        "grok_brief": grok_brief,
         "sample": top_comments[:5],
+        "powered_by": powered_by,
         "message": f"Seeded with {len(top_comments)} real comments from {', '.join(sources_fetched)}"
     }
 

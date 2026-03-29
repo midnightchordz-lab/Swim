@@ -52,7 +52,7 @@ httplib2==0.31.2
 httpx==0.28.1
 huggingface_hub==1.7.2
 idna==3.11
-importlib_metadata==9.0.0
+importlib_metadata==8.7.1
 iniconfig==2.3.0
 isort==8.0.1
 Jinja2==3.1.6
@@ -76,7 +76,10 @@ mypy_extensions==1.1.0
 numpy==2.4.3
 oauthlib==3.3.1
 openai==1.99.9
-packaging==26.0
+opentelemetry-api==1.40.0
+opentelemetry-sdk==1.40.0
+opentelemetry-semantic-conventions==0.61b0
+packaging==25.0
 pandas==3.0.1
 passlib==1.7.4
 pathspec==1.0.4
@@ -100,6 +103,7 @@ Pygments==2.19.2
 PyJWT==2.12.1
 pymongo==4.5.0
 pyparsing==3.3.2
+PyPDF2==3.0.1
 pypdfium2==5.6.0
 pytest==9.0.2
 python-dateutil==2.9.0.post0
@@ -139,6 +143,7 @@ urllib3==2.6.3
 uvicorn==0.25.0
 watchfiles==1.1.1
 websockets==16.0
+xai-sdk==1.11.0
 yarl==1.23.0
 yfinance==1.2.0
 zipp==3.23.0

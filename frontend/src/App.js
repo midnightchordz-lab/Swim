@@ -213,7 +213,7 @@ const SentimentChart = ({ posts }) => {
   );
 };
 
-const Header = ({ onNewSimulation, hasSession }) => (
+const Header = ({ onNewSimulation, hasSession, grokActive }) => (
   <header className="app-header">
     <div className="logo-wrap">
       <div className="logo-icon-box">
@@ -228,6 +228,21 @@ const Header = ({ onNewSimulation, hasSession }) => (
       </div>
     </div>
     <div style={{display:'flex',gap:'12px',alignItems:'center'}}>
+      {grokActive && (
+        <span data-testid="grok-badge" style={{
+          display:'inline-flex',alignItems:'center',gap:'6px',
+          padding:'5px 12px',
+          background:'rgba(167,139,250,0.12)',
+          border:'1px solid rgba(167,139,250,0.25)',
+          borderRadius:'99px',
+          fontFamily:'var(--mono)',fontSize:'11px',color:'var(--violet)'
+        }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M4 4l16 16M20 4L4 20"/>
+          </svg>
+          Grok Active
+        </span>
+      )}
       <span className="badge-live" data-testid="system-status">System Online</span>
       {hasSession && (
         <button
@@ -449,11 +464,30 @@ const UploadStep = ({ sessionId, onComplete }) => {
   const fileInputRef = useRef(null);
   const [socialSeed, setSocialSeed] = useState(null);
   const [seedLoading, setSeedLoading] = useState(false);
+  const [grokStatus, setGrokStatus] = useState(null);
 
   const addLog = (message, type = "info") => {
     const time = new Date().toLocaleTimeString('en-US', { hour12: false });
     setLogs(prev => [...prev.slice(-20), { time, message, type }]);
   };
+
+  // Check Grok availability on mount
+  useEffect(() => {
+    axios.get(`${API}/health`).then(res => {
+      const grokAvail = res.data.grok_available;
+      setGrokStatus(grokAvail ? "active" : "offline");
+      addLog(
+        grokAvail
+          ? "GROK X Search active — real Twitter data ready"
+          : "GROK offline — Reddit + Nitter fallback active",
+        grokAvail ? "success" : "info"
+      );
+      addLog("NET Reddit JSON connected. Fallbacks warm.", "info");
+    }).catch(() => {
+      setGrokStatus("offline");
+      addLog("GROK status check failed — fallbacks active", "info");
+    });
+  }, []);
 
   const handleDrag = useCallback((e) => {
     e.preventDefault();
@@ -576,9 +610,15 @@ const UploadStep = ({ sessionId, onComplete }) => {
         include_reddit: true,
         include_twitter: true,
         max_comments: 30
-      }, { timeout: 20000 });
+      }, { timeout: 45000 });
       setSocialSeed(res.data);
       addLog(`${res.data.message}`, "success");
+      if (res.data.powered_by) {
+        addLog(`Powered by: ${res.data.powered_by}`, "success");
+      }
+      if (res.data.grok_brief) {
+        addLog(`Grok X Intelligence Brief received`, "success");
+      }
       if (res.data.real_sentiment) {
         const s = res.data.real_sentiment;
         addLog(`Real sentiment: ${s.positive}% positive, ${s.negative}% negative, ${s.neutral}% neutral`, "success");
@@ -743,15 +783,39 @@ const UploadStep = ({ sessionId, onComplete }) => {
                   className="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
                   style={{background:'rgba(245,166,35,0.15)',border:'1px solid rgba(245,166,35,0.3)',color:'var(--amber)'}}
                 >
-                  {seedLoading ? 'Fetching...' : socialSeed ? 'Re-fetch' : 'Fetch Reddit + Twitter'}
+                  {seedLoading ? 'Fetching...' : socialSeed ? 'Re-fetch' : grokStatus === 'active' ? 'Grok X Search + Reddit' : 'Fetch Reddit + Twitter'}
                 </button>
               </div>
               <p className="text-xs mb-3" style={{color:'var(--text3)'}}>
-                Seed the simulation with real Reddit/Twitter comments. Agents will react to actual public opinion.
+                {grokStatus === 'active'
+                  ? 'Powered by Grok X Search — fetches real tweets + Reddit comments for grounded simulations.'
+                  : 'Seed the simulation with real Reddit/Twitter comments. Agents will react to actual public opinion.'
+                }
               </p>
 
               {socialSeed && socialSeed.comments_fetched > 0 && (
                 <div className="space-y-2">
+                  {/* Grok X Intelligence Brief */}
+                  {socialSeed.grok_brief && (
+                    <div style={{
+                      background:'rgba(0,245,196,0.04)',
+                      border:'1px solid rgba(0,245,196,0.15)',
+                      borderRadius:'8px',
+                      padding:'8px 10px',
+                      marginBottom:'6px'
+                    }}>
+                      <div style={{
+                        fontFamily:'var(--mono)',fontSize:'9px',
+                        color:'var(--cyan)',letterSpacing:'0.06em',
+                        textTransform:'uppercase',marginBottom:'4px',
+                        display:'flex',alignItems:'center',gap:'4px'
+                      }}>
+                        <span style={{width:'4px',height:'4px',borderRadius:'50%',background:'var(--cyan)',display:'inline-block',animation:'pulse-dot 1.5s infinite'}}/>
+                        Grok X Brief
+                      </div>
+                      <p style={{fontSize:'11px',color:'var(--text2)',lineHeight:'1.6'}}>{socialSeed.grok_brief}</p>
+                    </div>
+                  )}
                   <div className="flex items-center gap-3 text-xs">
                     <span className="font-medium" style={{color:'var(--cyan)'}}>{socialSeed.comments_fetched} comments</span>
                     <span style={{color:'var(--text3)'}}>|</span>
@@ -780,6 +844,12 @@ const UploadStep = ({ sessionId, onComplete }) => {
                       <p className="line-clamp-2" style={{color:'var(--text2)'}}>{c.content}</p>
                     </div>
                   ))}
+                  {/* Powered by badge */}
+                  {socialSeed.powered_by && (
+                    <div style={{textAlign:'center',fontFamily:'var(--mono)',fontSize:'10px',color:'var(--text3)',marginTop:'4px'}}>
+                      Powered by {socialSeed.powered_by}
+                    </div>
+                  )}
                 </div>
               )}
               {socialSeed && socialSeed.comments_fetched === 0 && (
@@ -1028,10 +1098,31 @@ const UploadStep = ({ sessionId, onComplete }) => {
                 <div style={{padding:'0 20px 16px'}}>
                   <div className="section-div" style={{marginBottom:'12px'}}>or seed from live social data</div>
                   <button className="btn-violet" onClick={handleFetchSocialSeed} disabled={seedLoading || !topic.trim()}>
-                    {seedLoading ? 'Fetching social data...' : '🌐 Seed with Real Reddit + Twitter'}
+                    {seedLoading ? 'Fetching social data...' : grokStatus === 'active' ? '🔍 Seed with Grok X Search + Reddit' : '🌐 Seed with Real Reddit + Twitter'}
                   </button>
                   {socialSeed && socialSeed.comments_fetched > 0 && (
                     <div className="mt-3 space-y-2 text-xs">
+                      {/* Grok X Intelligence Brief */}
+                      {socialSeed.grok_brief && (
+                        <div data-testid="grok-brief" style={{
+                          background:'rgba(0,245,196,0.04)',
+                          border:'1px solid rgba(0,245,196,0.15)',
+                          borderRadius:'10px',
+                          padding:'10px 12px',
+                          marginBottom:'8px'
+                        }}>
+                          <div style={{
+                            fontFamily:'var(--mono)',fontSize:'9px',
+                            color:'var(--cyan)',letterSpacing:'0.08em',
+                            textTransform:'uppercase',marginBottom:'6px',
+                            display:'flex',alignItems:'center',gap:'6px'
+                          }}>
+                            <span style={{width:'5px',height:'5px',borderRadius:'50%',background:'var(--cyan)',display:'inline-block',animation:'pulse-dot 1.5s infinite'}}/>
+                            Grok X Intelligence Brief
+                          </div>
+                          <p style={{fontSize:'11px',color:'var(--text2)',lineHeight:'1.65'}}>{socialSeed.grok_brief}</p>
+                        </div>
+                      )}
                       <div className="flex items-center gap-3">
                         <span style={{color:'var(--cyan)'}} className="font-medium">{socialSeed.comments_fetched} comments</span>
                         <span style={{color:'var(--text3)'}}>|</span>
@@ -1042,6 +1133,12 @@ const UploadStep = ({ sessionId, onComplete }) => {
                         <span className="px-2 py-0.5 rounded" style={{background:'rgba(255,71,87,0.15)',color:'var(--red)'}}>{socialSeed.real_sentiment?.negative || 0}% negative</span>
                         <span className="px-2 py-0.5 rounded" style={{background:'rgba(107,114,128,0.15)',color:'var(--text2)'}}>{socialSeed.real_sentiment?.neutral || 0}% neutral</span>
                       </div>
+                      {/* Powered by badge */}
+                      {socialSeed.powered_by && (
+                        <div data-testid="powered-by-badge" style={{textAlign:'center',fontFamily:'var(--mono)',fontSize:'10px',color:'var(--text3)',marginTop:'4px'}}>
+                          Powered by {socialSeed.powered_by}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -2362,10 +2459,17 @@ function App() {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [grokActive, setGrokActive] = useState(false);
 
   const createNewSession = async () => {
     setLoading(true);
     try {
+      // Check Grok availability
+      try {
+        const health = await axios.get(`${API}/health`);
+        setGrokActive(!!health.data.grok_available);
+      } catch (e) { /* ignore health check failure */ }
+
       const response = await axios.post(`${API}/sessions`);
       setSessionId(response.data.session_id);
       // Reset all state
@@ -2491,7 +2595,7 @@ function App() {
       <div className="grid-overlay" />
       <ParticleBackground />
       <div className="app-shell">
-        <Header onNewSimulation={handleNewSimulation} hasSession={!!sessionId} />
+        <Header onNewSimulation={handleNewSimulation} hasSession={!!sessionId} grokActive={grokActive} />
         
         <StepIndicator
           currentStep={currentStep}

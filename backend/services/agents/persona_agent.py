@@ -56,7 +56,8 @@ Return JSON: {{"agents": [...]}}"""
     agents_data = json.loads(clean_json(response))
     agents = agents_data.get("agents", [])
 
-    for agent in agents:
+    for i, agent in enumerate(agents):
+        agent.setdefault("id", f"agent_{i+1}")
         agent["memories"] = []
 
     return agents

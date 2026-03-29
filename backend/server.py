@@ -996,8 +996,9 @@ async def run_agent_generation(session_id: str, num_agents: int):
         if cached_agents:
             logger.info(f"[Cache] Agent cache hit: {len(cached_agents)} agents")
             agents = cached_agents
-            # Enrich with templates
-            for agent in agents:
+            # Enrich with templates and ensure IDs
+            for i, agent in enumerate(agents):
+                agent.setdefault("id", f"agent_{i+1}")
                 ptype = agent.get("personality_type", "Neutral")
                 template = PERSONALITY_TEMPLATES.get(ptype, PERSONALITY_TEMPLATES["Neutral"])
                 agent.setdefault("communication_style", template["style"])
@@ -1015,8 +1016,9 @@ async def run_agent_generation(session_id: str, num_agents: int):
             agents = result["agents"]
             diversity_score = result["diversity_score"]
 
-            # Enrich with personality templates (Change 7)
-            for agent in agents:
+            # Enrich with personality templates + ensure IDs (Change 7)
+            for i, agent in enumerate(agents):
+                agent.setdefault("id", f"agent_{i+1}")
                 ptype = agent.get("personality_type", "Neutral")
                 template = PERSONALITY_TEMPLATES.get(ptype, PERSONALITY_TEMPLATES["Neutral"])
                 agent.setdefault("communication_style", template["style"])

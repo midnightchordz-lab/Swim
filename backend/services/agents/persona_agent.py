@@ -31,36 +31,25 @@ async def run(graph: dict, prediction_query: str, num_agents: int,
 
     system_prompt = """You are a simulation designer. Create realistic agent personas for a social prediction simulation. Respond ONLY with valid JSON, no markdown fences."""
 
-    user_prompt = f"""World Context: {graph.get('summary', '')[:1500]}
-Key Themes: {', '.join(graph.get('themes', []))}
-Entities: {entities_summary}
-Prediction Question: {prediction_query}
-Data Mode: {data_mode.upper()}
-{intel_context}
+    user_prompt = f"""World: {graph.get('summary', '')[:800]}
+Themes: {', '.join(graph.get('themes', []))}
+Prediction: {prediction_query}
 
-Agent Guidance: {guidance}
+Generate exactly {num_agents} diverse agents. For each provide ONLY:
+- name (realistic full name)
+- age (18-70)
+- occupation (specific job title)
+- background (one sentence, unique to this person)
+- personality_type (choose: Skeptic/Optimist/Insider/Contrarian/Expert/Neutral/Activist/Pragmatist)
+- influence_level (1-10)
+- initial_stance (one sentence, their position on the topic)
+- avatar_emoji (single relevant emoji)
 
-Create exactly {num_agents} diverse agent personas. CRITICAL: ensure at least one each of Skeptic, Expert, Contrarian, and Activist.
+DO NOT write communication_style or platform_preference — derived from personality_type.
+Vary demographics, professions, income levels. No two agents the same occupation.
+CRITICAL: include at least one each of Skeptic, Expert, Contrarian, and Activist.
 
-Return JSON:
-{{
-  "agents": [
-    {{
-      "id": "agent_1",
-      "name": "Full Name",
-      "avatar_emoji": "single emoji",
-      "age": 35,
-      "occupation": "specific job relevant to the topic",
-      "background": "2-sentence backstory explaining their expertise/stake in this topic",
-      "personality_type": "Skeptic|Optimist|Insider|Contrarian|Expert|Neutral|Activist|Pragmatist",
-      "initial_stance": "Their specific position on the current situation (1-2 sentences)",
-      "influence_level": 7,
-      "platform_preference": "Twitter|Reddit",
-      "communication_style": "analytical|emotional|aggressive|diplomatic|satirical|factual"
-    }}
-  ]
-}}
-Make agents feel like real distinct people. Vary demographics, professions, viewpoints."""
+Return JSON: {{"agents": [...]}}"""
 
     from services.agents.common import clean_json
     response = await call_claude_fn(system_prompt, user_prompt, max_tokens=2000)

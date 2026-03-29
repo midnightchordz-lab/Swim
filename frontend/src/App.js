@@ -1089,7 +1089,7 @@ const AgentCard = ({ agent, showPreview = false }) => (
 
 // Agent Step Component with Preview
 const AgentStep = ({ sessionId, graph, onComplete }) => {
-  const [numAgents, setNumAgents] = useState(20);
+  const [numAgents, setNumAgents] = useState(10);
   const [cloneMultiplier, setCloneMultiplier] = useState(10);
   const [silentPop, setSilentPop] = useState(5000);
   const [popConfigured, setPopConfigured] = useState(false);
@@ -1282,9 +1282,9 @@ const AgentStep = ({ sessionId, graph, onComplete }) => {
               className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
             />
             <div className="flex justify-between text-[10px] text-gray-500 mt-1">
-              <span>10</span>
-              <span>100</span>
-              <span>200</span>
+              <span>10 ($)</span>
+              <span>20 ($$)</span>
+              <span>50 ($$$)</span>
               <span>300</span>
             </div>
           </div>
@@ -1413,7 +1413,7 @@ const PostCard = ({ post, isReply }) => (
 
 // Simulation View Component
 const SimulationView = ({ sessionId, agents, onComplete }) => {
-  const [numRounds, setNumRounds] = useState(5);
+  const [numRounds, setNumRounds] = useState(3);
   const [simulating, setSimulating] = useState(false);
   const [status, setStatus] = useState(null);
   const [posts, setPosts] = useState([]);
@@ -1544,21 +1544,28 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
                 data-testid="rounds-slider"
                 type="range"
                 min="3"
-                max="15"
+                max="10"
                 value={numRounds}
                 onChange={(e) => setNumRounds(parseInt(e.target.value))}
                 className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
               />
               <div className="flex justify-between text-[10px] text-gray-500 mt-1">
-                <span>3</span>
-                <span>9</span>
-                <span>15</span>
+                <span>3 (fast)</span>
+                <span>5 (balanced)</span>
+                <span>10 (deep)</span>
               </div>
+            </div>
+
+            <div data-testid="cost-estimate" className="bg-gray-800/60 rounded-lg p-3 mb-4 flex items-center justify-between">
+              <span className="text-xs text-gray-400">Estimated cost</span>
+              <span className="text-sm font-mono font-bold text-emerald-400">
+                ~${(0.02 + Math.ceil((agents?.length || 10) / 10) * 0.003 + Math.ceil((agents?.length || 10) / 10) * numRounds * 0.004).toFixed(3)}
+              </span>
             </div>
 
             <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 mb-4">
               <p className="text-amber-400 text-xs">
-                Estimated time: ~{numRounds * 30} seconds
+                Estimated time: ~{numRounds * 20} seconds
               </p>
             </div>
 
@@ -1689,14 +1696,35 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
       <SystemDashboard logs={logs} />
 
       {isDone && (
-        <button
-          data-testid="generate-report-button"
-          onClick={() => onComplete(posts)}
-          className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg flex items-center justify-center gap-2 transition-colors"
-        >
-          Generate Report →
-          <BarChart3 className="w-4 h-4" />
-        </button>
+        <div className="space-y-2">
+          <button
+            data-testid="generate-report-button"
+            onClick={() => onComplete(posts)}
+            className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg flex items-center justify-center gap-2 transition-colors"
+          >
+            Generate Report
+            <BarChart3 className="w-4 h-4" />
+          </button>
+          <button
+            data-testid="extend-simulation-button"
+            onClick={async () => {
+              try {
+                const res = await axios.post(
+                  `${API}/sessions/${sessionId}/extend`,
+                  { additional_rounds: 3 }
+                );
+                if (res.data.status === 'extending') {
+                  setSimulating(true);
+                }
+              } catch (e) {
+                setError('Failed to extend simulation');
+              }
+            }}
+            className="w-full py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm font-medium rounded-lg transition-colors"
+          >
+            + Extend 3 more rounds (skip regeneration, ~$0.02)
+          </button>
+        </div>
       )}
     </div>
   );
@@ -1747,12 +1775,27 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
   const [report, setReport] = useState(null);
   const [error, setError] = useState(null);
   const [sessionMeta, setSessionMeta] = useState(null);
+  const [qualityScore, setQualityScore] = useState(null);
 
   useEffect(() => {
     axios.get(`${API}/sessions/${sessionId}/simulation-status`)
       .then(res => setSessionMeta(res.data))
       .catch(() => {});
   }, [sessionId]);
+
+  // Poll for background critic quality score
+  useEffect(() => {
+    if (!report) return;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await axios.get(`${API}/sessions/${sessionId}`);
+        if (res.data.quality_score) {
+          setQualityScore(res.data.quality_score);
+        }
+      } catch(e) {}
+    }, 35000);
+    return () => clearTimeout(timer);
+  }, [report, sessionId]);
 
   const generateReport = async () => {
     setLoading(true);
@@ -1849,20 +1892,15 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
             confidence={report.prediction?.confidence}
           />
         </div>
-        {/* Simulation Quality Badge */}
-        {report.quality_score != null && (
+        {/* Simulation Quality Badge (from report or background critic) */}
+        {(report.quality_score != null || qualityScore) && (
           <div data-testid="quality-score-badge" className={`mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border ${
-            report.quality_score >= 8 ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400' :
-            report.quality_score >= 6 ? 'bg-blue-500/15 border-blue-500/40 text-blue-400' :
-            report.quality_score >= 4 ? 'bg-yellow-500/15 border-yellow-500/40 text-yellow-400' :
+            (qualityScore || report.quality_score) >= 8 ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400' :
+            (qualityScore || report.quality_score) >= 6 ? 'bg-amber-500/15 border-amber-500/40 text-amber-400' :
             'bg-red-500/15 border-red-500/40 text-red-400'
           }`}>
             <Shield className="w-3.5 h-3.5" />
-            Simulation Quality: {
-              report.quality_score >= 8 ? 'Excellent' :
-              report.quality_score >= 6 ? 'Good' :
-              report.quality_score >= 4 ? 'Fair' : 'Low'
-            } ({report.quality_score}/10)
+            Quality: {qualityScore || report.quality_score}/10
             {report.overconfident && <span className="text-yellow-400 ml-1">(overconfident)</span>}
           </div>
         )}

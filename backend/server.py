@@ -9,13 +9,14 @@ from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Dict, Any
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import json
 import re
 import random
 import math
 import asyncio
 import io
+import hashlib
 
 import base64
 import httpx
@@ -67,10 +68,10 @@ class SessionResponse(BaseModel):
     session_id: str
 
 class GenerateAgentsRequest(BaseModel):
-    num_agents: int = Field(default=20, ge=10, le=300)
+    num_agents: int = Field(default=10, ge=10, le=300)
 
 class SimulateRequest(BaseModel):
-    num_rounds: int = Field(default=5, ge=3, le=15)
+    num_rounds: int = Field(default=3, ge=3, le=10)
 
 class ChatRequest(BaseModel):
     target_type: str  # "agent" or "report"
@@ -90,6 +91,9 @@ class ConfigurePopulationRequest(BaseModel):
 class InjectVariableRequest(BaseModel):
     variable: str
     num_new_rounds: int = Field(default=2, ge=1, le=5)
+
+class ExtendSimulationRequest(BaseModel):
+    additional_rounds: int = Field(default=3, ge=1, le=10)
 
 # Prediction horizons
 PREDICTION_HORIZONS = [
@@ -118,6 +122,19 @@ def detect_topic_category(topic: str) -> str:
         if any(kw in topic_lower for kw in keywords):
             return category
     return "general"
+
+
+# Personality templates — reduce LLM token usage for agent generation
+PERSONALITY_TEMPLATES = {
+    "Skeptic":     {"style": "analytical, questioning, demands evidence", "platform": "Reddit"},
+    "Optimist":    {"style": "hopeful, solution-focused, encouraging",    "platform": "Twitter"},
+    "Insider":     {"style": "authoritative, uses jargon, drops hints",   "platform": "Twitter"},
+    "Contrarian":  {"style": "provocative, finds counterarguments",       "platform": "Twitter"},
+    "Expert":      {"style": "precise, cites data, acknowledges limits",  "platform": "Reddit"},
+    "Neutral":     {"style": "balanced, presents both sides",             "platform": "Reddit"},
+    "Activist":    {"style": "passionate, calls to action, systemic lens","platform": "Twitter"},
+    "Pragmatist":  {"style": "practical, action-oriented, avoids ideology","platform": "Reddit"},
+}
 
 
 # Financial ticker mapping for real-time price data
@@ -384,25 +401,29 @@ async def _llm_call(provider: str, model: str, system_prompt: str, user_prompt: 
     raise last_error
 
 
-async def call_premium(system_prompt: str, user_prompt: str, max_tokens: int = 1500) -> str:
-    """Sonnet 4 — deep reasoning tasks only (intel briefs, graph extraction, reports, agent generation)."""
+async def call_claude_premium(system_prompt: str, user_prompt: str, max_tokens: int = 1500) -> str:
+    """Sonnet 4 — deep reasoning only: graph extraction, agent generation, final report."""
     return await _llm_call("anthropic", "claude-sonnet-4-20250514", system_prompt, user_prompt, max_tokens)
 
 
-async def call_fast(system_prompt: str, user_prompt: str, max_tokens: int = 400) -> str:
-    """Haiku 4.5 — medium-complexity tasks (critic checks, chat, rebalance)."""
+async def call_claude_fast(system_prompt: str, user_prompt: str, max_tokens: int = 400) -> str:
+    """Haiku 4.5 — medium tasks: chat, critic checks, auto-questions, agent rebalance."""
     return await _llm_call("anthropic", "claude-haiku-4-5-20251001", system_prompt, user_prompt, max_tokens)
 
 
-async def call_flash(system_prompt: str, user_prompt: str, max_tokens: int = 400) -> str:
+async def call_gemini_flash(system_prompt: str, user_prompt: str, max_tokens: int = 400) -> str:
     """Gemini Flash — cheapest, bulk generation (posts, replies, narratives)."""
     return await _llm_call("gemini", "gemini-2.5-flash", system_prompt, user_prompt, max_tokens)
 
 
+# Alias for backward compat (image uploads still use call_claude)
+call_claude_premium_ref = call_claude_premium
+
+
 async def call_claude(system_prompt: str, user_prompt: str, max_tokens: int = 1500, image_data: dict = None, retries: int = 3) -> str:
-    """Legacy wrapper — routes to premium for text, litellm for images."""
+    """Legacy wrapper — routes to call_claude_premium for text, litellm for images."""
     if not image_data:
-        return await call_premium(system_prompt, user_prompt, max_tokens)
+        return await call_claude_premium(system_prompt, user_prompt, max_tokens)
 
     api_key = os.environ.get('EMERGENT_LLM_KEY')
     if not api_key:
@@ -442,6 +463,55 @@ async def call_claude(system_prompt: str, user_prompt: str, max_tokens: int = 15
                 continue
             raise
     raise last_error
+
+
+# ─── Caching functions ───────────────────────────────────────────────
+async def get_cached_graph(topic: str, prediction_query: str) -> dict | None:
+    """Return cached graph if same topic queried in last 24 hours."""
+    cache_key = hashlib.md5(
+        f"{topic.lower().strip()}{prediction_query[:50].lower()}".encode()
+    ).hexdigest()
+    cached = await db.graph_cache.find_one({
+        "hash": cache_key,
+        "created_at": {"$gt": (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()}
+    })
+    return json.loads(cached["graph_json"]) if cached else None
+
+async def save_graph_cache(topic: str, prediction_query: str, graph: dict):
+    cache_key = hashlib.md5(
+        f"{topic.lower().strip()}{prediction_query[:50].lower()}".encode()
+    ).hexdigest()
+    await db.graph_cache.replace_one(
+        {"hash": cache_key},
+        {
+            "hash": cache_key,
+            "graph_json": json.dumps(graph),
+            "topic": topic,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        },
+        upsert=True
+    )
+
+async def get_cached_agents(graph_hash: str, num_agents: int) -> list | None:
+    """Return cached agents if same graph + count used in last 12 hours."""
+    cache_key = f"{graph_hash}_{num_agents}"
+    cached = await db.agent_cache.find_one({
+        "hash": cache_key,
+        "created_at": {"$gt": (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()}
+    })
+    return json.loads(cached["agents_json"]) if cached else None
+
+async def save_agent_cache(graph_hash: str, num_agents: int, agents: list):
+    cache_key = f"{graph_hash}_{num_agents}"
+    await db.agent_cache.replace_one(
+        {"hash": cache_key},
+        {
+            "hash": cache_key,
+            "agents_json": json.dumps(agents),
+            "created_at": datetime.now(timezone.utc).isoformat()
+        },
+        upsert=True
+    )
 
 
 async def parse_document(file: UploadFile) -> tuple[str, dict]:
@@ -635,16 +705,30 @@ async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_q
             fin_parts.append("=== END VERIFIED MARKET DATA ===\n")
             financial_context = "\n".join(fin_parts)
 
-        # Run orchestrator Intel + Graph pipeline
-        call_fns = {"premium": call_premium, "fast": call_fast, "flash": call_flash}
-        state = await orchestrator.run_live_intel_pipeline(
-            session_id, topic, horizon, prediction_query,
-            web_context, yahoo_headlines, financial_context,
-            financial_data, call_fns, db
-        )
-
-        intel_brief = state["intel_brief"]
-        graph = state["graph"]
+        # Check graph cache first
+        cached_graph = await get_cached_graph(topic, prediction_query)
+        if cached_graph:
+            logger.info(f"[Cache] Graph cache hit for topic: {topic}")
+            # Still need intel brief from orchestrator, but skip graph extraction
+            call_fns = {"premium": call_claude_premium, "fast": call_claude_fast, "flash": call_gemini_flash}
+            state = await orchestrator.run_live_intel_pipeline(
+                session_id, topic, horizon, prediction_query,
+                web_context, yahoo_headlines, financial_context,
+                financial_data, call_fns, db
+            )
+            intel_brief = state["intel_brief"]
+            graph = cached_graph
+        else:
+            # Run orchestrator Intel + Graph pipeline
+            call_fns = {"premium": call_claude_premium, "fast": call_claude_fast, "flash": call_gemini_flash}
+            state = await orchestrator.run_live_intel_pipeline(
+                session_id, topic, horizon, prediction_query,
+                web_context, yahoo_headlines, financial_context,
+                financial_data, call_fns, db
+            )
+            intel_brief = state["intel_brief"]
+            graph = state["graph"]
+            await save_graph_cache(topic, prediction_query, graph)
 
         await db.sessions.update_one(
             {"id": session_id},
@@ -846,7 +930,7 @@ Platform: {platform}
 React to this new development as {agent['name']}. Output ONLY your post."""
 
             try:
-                response = await call_flash(system_prompt, user_prompt, max_tokens=200)
+                response = await call_gemini_flash(system_prompt, user_prompt, max_tokens=200)
                 content = response.strip()
                 
                 post = {
@@ -898,18 +982,48 @@ async def get_prediction_horizons():
 
 
 async def run_agent_generation(session_id: str, num_agents: int):
-    """Background task: orchestrator runs Persona Agent pipeline."""
+    """Background task: orchestrator runs Persona Agent pipeline with caching."""
     from services.agents import orchestrator
     try:
-        call_fns = {"premium": call_premium, "fast": call_fast, "flash": call_flash}
-        result = await orchestrator.run_agent_generation_pipeline(
-            session_id, num_agents, call_fns, db
-        )
-        if not result:
+        session = await db.sessions.find_one({"id": session_id})
+        if not session:
             return
 
-        agents = result["agents"]
-        diversity_score = result["diversity_score"]
+        # Check agent cache
+        graph_hash = hashlib.md5(session.get("graph_json", "").encode()).hexdigest()
+        cached_agents = await get_cached_agents(graph_hash, num_agents)
+
+        if cached_agents:
+            logger.info(f"[Cache] Agent cache hit: {len(cached_agents)} agents")
+            agents = cached_agents
+            # Enrich with templates
+            for agent in agents:
+                ptype = agent.get("personality_type", "Neutral")
+                template = PERSONALITY_TEMPLATES.get(ptype, PERSONALITY_TEMPLATES["Neutral"])
+                agent.setdefault("communication_style", template["style"])
+                agent.setdefault("platform_preference", template["platform"])
+                agent.setdefault("memories", [])
+            diversity_score = 0.7
+        else:
+            call_fns = {"premium": call_claude_premium, "fast": call_claude_fast, "flash": call_gemini_flash}
+            result = await orchestrator.run_agent_generation_pipeline(
+                session_id, num_agents, call_fns, db
+            )
+            if not result:
+                return
+
+            agents = result["agents"]
+            diversity_score = result["diversity_score"]
+
+            # Enrich with personality templates (Change 7)
+            for agent in agents:
+                ptype = agent.get("personality_type", "Neutral")
+                template = PERSONALITY_TEMPLATES.get(ptype, PERSONALITY_TEMPLATES["Neutral"])
+                agent.setdefault("communication_style", template["style"])
+                agent.setdefault("platform_preference", template["platform"])
+                agent.setdefault("memories", [])
+
+            await save_agent_cache(graph_hash, num_agents, agents)
 
         await db.sessions.update_one(
             {"id": session_id},
@@ -1063,6 +1177,7 @@ async def run_simulation(session_id: str, num_rounds: int):
         all_posts = []
         round_narratives = []
         BATCH_SIZE = 10
+        compressed_context = None
 
         for round_num in range(1, num_rounds + 1):
             await db.sessions.update_one(
@@ -1070,25 +1185,37 @@ async def run_simulation(session_id: str, num_rounds: int):
                 {"$set": {"current_round": round_num}}
             )
 
+            # Change 4: Compress context after round 1
+            if round_num == 2 and not compressed_context:
+                try:
+                    compressed_context = await call_gemini_flash(
+                        "Summarise in 15 words max. Be specific with key facts/numbers.",
+                        f"Summarise: {graph.get('summary', '')}"
+                    )
+                    compressed_context = compressed_context.strip()
+                except Exception:
+                    compressed_context = graph.get('summary', '')[:100]
+
+            world_context = compressed_context if (round_num > 1 and compressed_context) else graph.get('summary', '')
+
             hub_agents = [a for a in agents if a["id"] in hub_ids]
             non_hub = [a for a in agents if a["id"] not in hub_ids]
             active_non_hub = random.sample(non_hub, k=max(3, int(len(non_hub)*random.uniform(0.55,0.75))))
             active_agents = hub_agents + active_non_hub
 
-            recent_posts = all_posts[-10:]
-            # Use feed algorithm if available, else fall back
+            # Use feed algorithm with compressed context
             if all_posts and active_agents:
                 sample_agent = active_agents[0]
                 feed_posts = get_agent_feed(sample_agent, all_posts, round_num)
                 recent_context = "\n".join([
-                    f"{p['platform']}: {p['agent_name']}: {p['content']}"
-                    for p in feed_posts
+                    f"{p['agent_name'][:12]}: {p['content'][:55]}"
+                    for p in (feed_posts or all_posts[-6:])
                 ]) if feed_posts else "No previous posts yet."
             else:
                 recent_context = "\n".join([
-                    f"{p['platform']}: {p['agent_name']}: {p['content']}"
-                    for p in recent_posts
-                ]) if recent_posts else "No previous posts yet."
+                    f"{p['agent_name'][:12]}: {p['content'][:55]}"
+                    for p in all_posts[-6:]
+                ]) if all_posts else "No previous posts yet."
 
             director_context = f"\nPrevious round summary: {round_narratives[-1]}" if round_narratives else ""
 
@@ -1106,7 +1233,8 @@ async def run_simulation(session_id: str, num_rounds: int):
                 agents_desc = "\n".join([
                     f"Agent {i+1}: {a['name']} | {a['occupation']} | "
                     f"{a['personality_type']} | Platform: {a['platform_preference']} | "
-                    f"Stance: {a['initial_stance']} | "
+                    f"Stance: {a['initial_stance'][:50]} | "
+                    f"{'Background: ' + a.get('background','')[:40] + ' | ' if round_num == 1 else ''}"
                     f"Feeling: {get_emotion_label(a.get('emotional_state',{}).get('valence',0.0))}"
                     for i, a in enumerate(batch)
                 ])
@@ -1116,7 +1244,7 @@ async def run_simulation(session_id: str, num_rounds: int):
                     "in their unique voice. Stay in character. "
                     "Return ONLY a valid JSON array, no other text, no markdown."
                 )
-                user_prompt = f"""World context: {graph.get('summary','')[:1500]}
+                user_prompt = f"""World context: {world_context[:1500]}
 Prediction question: {query}
 Round: {round_num}/{num_rounds}{director_context}{emotional_context}
 
@@ -1134,7 +1262,7 @@ Return JSON array ONLY:
 ]"""
 
                 try:
-                    response = await call_flash(system_prompt, user_prompt, max_tokens=600)
+                    response = await call_gemini_flash(system_prompt, user_prompt, max_tokens=600)
                     cleaned = clean_json_response(response)
                     posts_data = json.loads(cleaned)
 
@@ -1197,7 +1325,7 @@ Return JSON array ONLY:
 [{{"agent_index": 1, "content": "reply text"}}, ...]"""
 
                     try:
-                        response = await call_flash(system_prompt, user_prompt, max_tokens=200)
+                        response = await call_gemini_flash(system_prompt, user_prompt, max_tokens=200)
                         cleaned = clean_json_response(response)
                         replies_data = json.loads(cleaned)
 
@@ -1287,12 +1415,12 @@ Return JSON array ONLY:
                     f"BREAKING: A prominent contrarian voice challenged the "
                     f"{herd_check['dominant_sentiment']} consensus — some agents reconsidering."
                 )
-            elif round_posts and round_num < num_rounds:
+            elif round_posts and round_num >= 3 and round_num < num_rounds:
                 try:
                     sample_posts = "\n".join([f"{p['agent_name']}: {p['content'][:100]}" for p in round_posts[:6]])
                     emo_temp2 = get_emotional_temperature(agents)
                     belief_sum = get_belief_summary(agents)
-                    narrative = await call_flash(
+                    narrative = await call_gemini_flash(
                         "You are a simulation narrator. Write concise 1-2 sentence round summaries.",
                         f"Round {round_num}/{num_rounds} on: {query}\nPosts:\n{sample_posts}\n"
                         f"Emotion: {emo_temp2['state']} | Support: {belief_sum['support']}% | "
@@ -1358,6 +1486,42 @@ async def start_simulation(session_id: str, request: SimulateRequest, background
     return {"status": "simulating"}
 
 
+@api_router.post("/sessions/{session_id}/extend")
+async def extend_simulation(
+    session_id: str,
+    request: ExtendSimulationRequest,
+    background_tasks: BackgroundTasks
+):
+    """Add more rounds to a completed simulation — skips graph/agent regeneration."""
+    session = await db.sessions.find_one({"id": session_id})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.get("status") not in ["simulation_done", "complete"]:
+        raise HTTPException(status_code=400, detail="Simulation must be complete to extend")
+
+    current_rounds = session.get("total_rounds", 0)
+    new_total = current_rounds + request.additional_rounds
+
+    await db.sessions.update_one(
+        {"id": session_id},
+        {"$set": {
+            "status": "simulating",
+            "total_rounds": new_total,
+            "report_json": None,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }}
+    )
+    background_tasks.add_task(
+        run_simulation, session_id, request.additional_rounds
+    )
+    return {
+        "status": "extending",
+        "previous_rounds": current_rounds,
+        "additional_rounds": request.additional_rounds,
+        "total_rounds": new_total
+    }
+
+
 @api_router.get("/sessions/{session_id}/simulation-status")
 async def get_simulation_status(session_id: str):
     """Get current simulation status"""
@@ -1392,45 +1556,138 @@ async def get_posts(session_id: str):
     return {"posts": posts}
 
 
+async def run_background_critic(session_id: str, report: dict):
+    """Runs 30 seconds after report generation — non-blocking."""
+    await asyncio.sleep(30)
+    try:
+        from agents import check_report as agents_check_report
+        result = await agents_check_report(report, call_claude_fast)
+        await db.sessions.update_one(
+            {"id": session_id},
+            {"$set": {"quality_score": result.get("quality_score", 6),
+                      "quality_feedback": result}}
+        )
+        logger.info(f"[Critic] Background check done for {session_id[:8]}: score={result.get('quality_score')}")
+    except Exception as e:
+        logger.error(f"[Critic] Background check failed: {e}")
+
+
 @api_router.post("/sessions/{session_id}/generate-report")
 async def generate_report(session_id: str):
-    """Generate prediction report with round narratives and critic quality check."""
-    from services.agents import orchestrator
+    """Progressive 2-phase report: Phase 1 (Haiku, fast core) + Phase 2 (Sonnet, deep analysis)."""
     session = await db.sessions.find_one({"id": session_id})
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     if session.get("status") not in ["simulation_done", "complete"]:
         raise HTTPException(status_code=400, detail="Simulation not complete")
 
-    try:
-        call_fns = {"premium": call_premium, "fast": call_fast, "flash": call_flash}
-        report = await orchestrator.run_report_pipeline(session_id, call_fns, db)
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON parsing error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to parse report from AI response")
-    except Exception as e:
-        logger.error(f"Claude API error: {e}")
-        raise HTTPException(status_code=500, detail=f"AI processing error: {str(e)}")
+    agents = json.loads(session["agents_json"])
+    graph = json.loads(session["graph_json"])
+    query = session["prediction_query"]
 
-    # Use new critic check_report (pure Python, fast)
-    from agents import check_report as agents_check_report
-    quality = await agents_check_report(report, call_fast)
-    report["quality_score"] = quality.get("quality_score", 6)
-    report["quality_feedback"] = quality.get("recommendation", "")
-    report["overconfident"] = quality.get("overconfident", False)
-    report["quality_issues"] = quality.get("issues", [])
+    posts = await db.sim_posts.find(
+        {"session_id": session_id}
+    ).sort([("round", 1)]).to_list(1000)
+
+    # Build transcript (capped)
+    lines = [f"[R{p['round']}][{p.get('platform','')}] {p['agent_name']}: {p['content'][:80]}"
+             for p in posts]
+    transcript = "\n".join(lines)
+    if len(transcript) > 5000:
+        transcript = transcript[:2500] + "\n...\n" + transcript[-2500:]
+
+    agents_summary = "\n".join([
+        f"- {a['name']} [{a.get('personality_type','')}]: {a.get('initial_stance','')[:60]}"
+        for a in agents[:20]
+    ])
+
+    # PHASE 1 — fast core report (Haiku, small)
+    phase1_system = "You are a prediction analyst. Return ONLY valid JSON, no markdown."
+    phase1_prompt = f"""Prediction: {query}
+Context: {graph.get('summary','')}
+Agents ({len(agents)}):
+{agents_summary}
+Simulation ({session.get('total_rounds',3)} rounds):
+{transcript}
+
+Return JSON with ONLY these fields:
+{{
+  "executive_summary": "3 sentences",
+  "prediction": {{
+    "outcome": "one sentence",
+    "confidence": "High|Medium|Low",
+    "confidence_score": 0.65,
+    "timeframe": "e.g. next month"
+  }},
+  "opinion_landscape": {{
+    "dominant_sentiment": "positive|negative|divided|uncertain",
+    "support_percentage": 45,
+    "opposition_percentage": 38,
+    "undecided_percentage": 17
+  }}
+}}"""
+
+    try:
+        r1 = await call_claude_fast(phase1_system, phase1_prompt, max_tokens=500)
+        phase1 = json.loads(clean_json_response(r1))
+    except Exception as e:
+        logger.error(f"Report phase 1 failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Report phase 1 failed: {str(e)}")
+
+    # PHASE 2 — deep analysis (Sonnet, medium)
+    phase2_system = "You are a senior analyst. Return ONLY valid JSON, no markdown."
+    phase2_prompt = f"""Prediction: {query}
+Simulation transcript:
+{transcript}
+
+Return JSON with ONLY these fields:
+{{
+  "key_factions": [
+    {{"name": "...", "size": "Large|Medium|Small", "stance": "...", "key_arguments": ["..."]}}
+  ],
+  "key_turning_points": [
+    {{"round": 1, "description": "...", "impact": "..."}}
+  ],
+  "emergent_patterns": ["..."],
+  "risk_factors": [
+    {{"factor": "...", "likelihood": "High|Medium|Low", "impact": "..."}}
+  ],
+  "alternative_scenarios": [
+    {{"scenario": "...", "probability": 0.2, "conditions": "..."}}
+  ],
+  "agent_highlights": [
+    {{"agent_name": "...", "role_in_simulation": "...", "notable_quote": "..."}}
+  ]
+}}"""
+
+    try:
+        r2 = await call_claude_premium(phase2_system, phase2_prompt, max_tokens=1200)
+        phase2 = json.loads(clean_json_response(r2))
+    except Exception as e:
+        logger.error(f"Report phase 2 failed: {e}")
+        phase2 = {}
+
+    # Merge into complete report
+    report = {
+        **phase1,
+        "opinion_landscape": {
+            **phase1.get("opinion_landscape", {}),
+            "key_factions": phase2.get("key_factions", [])
+        }
+    }
+    report.update({k: v for k, v in phase2.items() if k != "key_factions"})
 
     await db.sessions.update_one(
         {"id": session_id},
-        {
-            "$set": {
-                "status": "complete",
-                "report_json": json.dumps(report),
-                "quality_score": report.get("quality_score", 0),
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            }
-        }
+        {"$set": {
+            "status": "complete",
+            "report_json": json.dumps(report),
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }}
     )
+
+    # Background critic check — runs 30s later, non-blocking
+    asyncio.create_task(run_background_critic(session_id, report))
 
     return {"report": report}
 
@@ -1756,7 +2013,7 @@ Answer questions about the simulation findings. Be authoritative but acknowledge
 User: {request.message}"""
 
     try:
-        response = await call_fast(system_prompt, user_prompt, max_tokens=200)
+        response = await call_claude_fast(system_prompt, user_prompt, max_tokens=200)
         response_text = response.strip()
     except Exception as e:
         logger.error(f"Chat error: {e}")

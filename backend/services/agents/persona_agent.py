@@ -63,7 +63,7 @@ Return JSON:
 Make agents feel like real distinct people. Vary demographics, professions, viewpoints."""
 
     from services.agents.common import clean_json
-    response = await call_claude_fn(system_prompt, user_prompt, max_tokens=4000)
+    response = await call_claude_fn(system_prompt, user_prompt, max_tokens=2000)
     agents_data = json.loads(clean_json(response))
     agents = agents_data.get("agents", [])
 
@@ -113,7 +113,7 @@ Return JSON:
 
     from services.agents.common import clean_json
     try:
-        response = await call_claude_fn(system_prompt, user_prompt, max_tokens=2000)
+        response = await call_claude_fn(system_prompt, user_prompt, max_tokens=1000)
         new_agents = json.loads(clean_json(response)).get("agents", [])
         for a in new_agents:
             a["memories"] = []

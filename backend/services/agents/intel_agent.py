@@ -45,7 +45,7 @@ Return JSON:
 }}"""
 
     from services.agents.common import clean_json
-    response = await call_claude_fn(system_prompt, user_prompt, max_tokens=4000)
+    response = await call_claude_fn(system_prompt, user_prompt, max_tokens=800)
     return json.loads(clean_json(response))
 
 
@@ -72,7 +72,7 @@ Return JSON with the same keys as the original brief:
 }}"""
 
     from services.agents.common import clean_json
-    response = await call_claude_fn(system_prompt, user_prompt, max_tokens=4000)
+    response = await call_claude_fn(system_prompt, user_prompt, max_tokens=800)
     rewritten = json.loads(clean_json(response))
     # Preserve original fields that weren't rewritten
     for key in brief:

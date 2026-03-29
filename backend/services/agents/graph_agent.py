@@ -41,7 +41,7 @@ Return JSON:
 Extract 10-20 entities and 15-30 relationships. Be granular — include specific people, organizations, events, and abstract concepts."""
 
     from services.agents.common import clean_json
-    response = await call_claude_fn(system_prompt, user_prompt, max_tokens=3000)
+    response = await call_claude_fn(system_prompt, user_prompt, max_tokens=1500)
     graph = json.loads(clean_json(response))
 
     # Validate: if too few entities, retry once with more explicit instruction
@@ -53,7 +53,7 @@ IMPORTANT: Your previous attempt only extracted {len(graph.get('entities', []))}
 Extract at LEAST 10 entities. Be more granular — include specific people, sub-organizations, 
 individual events, regulatory bodies, market instruments, and abstract forces like 'retail sentiment'."""
 
-        response = await call_claude_fn(system_prompt, retry_prompt, max_tokens=3000)
+        response = await call_claude_fn(system_prompt, retry_prompt, max_tokens=1500)
         graph = json.loads(clean_json(response))
 
     # Preserve the full summary from intel brief
@@ -124,13 +124,13 @@ Return JSON:
 Extract 8-20 entities and 10-25 relationships relevant to the prediction question."""
 
     from services.agents.common import clean_json
-    response = await call_claude_fn(system_prompt, user_prompt, max_tokens=3000, image_data=image_data)
+    response = await call_claude_fn(system_prompt, user_prompt, max_tokens=1500, image_data=image_data)
     graph = json.loads(clean_json(response))
 
     if len(graph.get("entities", [])) < 6 and not image_data:
         logger.info("Graph agent (doc): too few entities, retrying")
         retry_prompt = user_prompt + f"\n\nIMPORTANT: Extract at LEAST 10 entities. Be more granular."
-        response = await call_claude_fn(system_prompt, retry_prompt, max_tokens=3000)
+        response = await call_claude_fn(system_prompt, retry_prompt, max_tokens=1500)
         graph = json.loads(clean_json(response))
 
     return graph

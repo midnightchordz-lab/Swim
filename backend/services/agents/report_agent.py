@@ -84,5 +84,5 @@ Return JSON:
 }}"""
 
     from services.agents.common import clean_json
-    response = await call_claude_fn(system_prompt, user_prompt, max_tokens=3000)
+    response = await call_claude_fn(system_prompt, user_prompt, max_tokens=1500)
     return json.loads(clean_json(response))

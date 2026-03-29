@@ -357,74 +357,90 @@ def fetch_yahoo_news(topic: str) -> str:
     return "\n".join(headlines)
 
 
-async def call_claude(system_prompt: str, user_prompt: str, max_tokens: int = 3000, image_data: dict = None, retries: int = 3) -> str:
-    """Call Claude API using emergentintegrations or litellm for images with retry logic"""
+async def _llm_call(provider: str, model: str, system_prompt: str, user_prompt: str, max_tokens: int, retries: int = 3) -> str:
+    """Generic LLM call with retry logic for any provider/model."""
     api_key = os.environ.get('EMERGENT_LLM_KEY')
     if not api_key:
         raise HTTPException(status_code=500, detail="EMERGENT_LLM_KEY not configured")
-    
+
     last_error = None
-    
     for attempt in range(retries):
         try:
-            # If image data is provided, use litellm directly with Emergent proxy
-            if image_data:
-                import litellm
-                from emergentintegrations.llm.chat import get_integration_proxy_url
-                
-                proxy_url = get_integration_proxy_url()
-                
-                # Build the message with image
-                messages = [
-                    {"role": "system", "content": system_prompt},
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{image_data['media_type']};base64,{image_data['base64']}"
-                                }
-                            },
-                            {
-                                "type": "text",
-                                "text": user_prompt
-                            }
-                        ]
-                    }
-                ]
-                
-                response = litellm.completion(
-                    model="claude-sonnet-4-20250514",
-                    messages=messages,
-                    api_key=api_key,
-                    api_base=proxy_url + "/llm",
-                    custom_llm_provider="openai",
-                    max_tokens=max_tokens,
-                    timeout=90
-                )
-                return response.choices[0].message.content
-            
-            # For text-only, use emergentintegrations
             chat = LlmChat(
                 api_key=api_key,
                 session_id=str(uuid.uuid4()),
                 system_message=system_prompt
             )
-            chat.with_model("anthropic", "claude-sonnet-4-20250514")
-            
-            user_message = UserMessage(text=user_prompt)
-            response = await chat.send_message(user_message)
+            chat.with_model(provider, model)
+            response = await chat.send_message(UserMessage(text=user_prompt))
             return response
-            
         except Exception as e:
             last_error = e
-            logger.warning(f"Claude API attempt {attempt + 1}/{retries} failed: {str(e)[:100]}")
+            logger.warning(f"LLM ({model}) attempt {attempt + 1}/{retries} failed: {str(e)[:100]}")
             if attempt < retries - 1:
-                await asyncio.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s, 4s
+                await asyncio.sleep(2 ** attempt)
                 continue
             raise
-    
+    raise last_error
+
+
+async def call_premium(system_prompt: str, user_prompt: str, max_tokens: int = 1500) -> str:
+    """Sonnet 4 — deep reasoning tasks only (intel briefs, graph extraction, reports, agent generation)."""
+    return await _llm_call("anthropic", "claude-sonnet-4-20250514", system_prompt, user_prompt, max_tokens)
+
+
+async def call_fast(system_prompt: str, user_prompt: str, max_tokens: int = 400) -> str:
+    """Haiku 4.5 — medium-complexity tasks (critic checks, chat, rebalance)."""
+    return await _llm_call("anthropic", "claude-haiku-4-5-20251001", system_prompt, user_prompt, max_tokens)
+
+
+async def call_flash(system_prompt: str, user_prompt: str, max_tokens: int = 400) -> str:
+    """Gemini Flash — cheapest, bulk generation (posts, replies, narratives)."""
+    return await _llm_call("gemini", "gemini-2.5-flash-lite", system_prompt, user_prompt, max_tokens)
+
+
+async def call_claude(system_prompt: str, user_prompt: str, max_tokens: int = 1500, image_data: dict = None, retries: int = 3) -> str:
+    """Legacy wrapper — routes to premium for text, litellm for images."""
+    if not image_data:
+        return await call_premium(system_prompt, user_prompt, max_tokens)
+
+    api_key = os.environ.get('EMERGENT_LLM_KEY')
+    if not api_key:
+        raise HTTPException(status_code=500, detail="EMERGENT_LLM_KEY not configured")
+
+    last_error = None
+    for attempt in range(retries):
+        try:
+            import litellm
+            from emergentintegrations.llm.chat import get_integration_proxy_url
+            proxy_url = get_integration_proxy_url()
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:{image_data['media_type']};base64,{image_data['base64']}"}},
+                        {"type": "text", "text": user_prompt}
+                    ]
+                }
+            ]
+            response = litellm.completion(
+                model="claude-sonnet-4-20250514",
+                messages=messages,
+                api_key=api_key,
+                api_base=proxy_url + "/llm",
+                custom_llm_provider="openai",
+                max_tokens=max_tokens,
+                timeout=90
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            last_error = e
+            logger.warning(f"Claude vision attempt {attempt + 1}/{retries} failed: {str(e)[:100]}")
+            if attempt < retries - 1:
+                await asyncio.sleep(2 ** attempt)
+                continue
+            raise
     raise last_error
 
 
@@ -620,10 +636,11 @@ async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_q
             financial_context = "\n".join(fin_parts)
 
         # Run orchestrator Intel + Graph pipeline
+        call_fns = {"premium": call_premium, "fast": call_fast, "flash": call_flash}
         state = await orchestrator.run_live_intel_pipeline(
             session_id, topic, horizon, prediction_query,
             web_context, yahoo_headlines, financial_context,
-            financial_data, call_claude, db
+            financial_data, call_fns, db
         )
 
         intel_brief = state["intel_brief"]
@@ -829,7 +846,7 @@ Platform: {platform}
 React to this new development as {agent['name']}. Output ONLY your post."""
 
             try:
-                response = await call_claude(system_prompt, user_prompt, max_tokens=200)
+                response = await call_flash(system_prompt, user_prompt, max_tokens=200)
                 content = response.strip()
                 
                 post = {
@@ -884,8 +901,9 @@ async def run_agent_generation(session_id: str, num_agents: int):
     """Background task: orchestrator runs Persona Agent pipeline."""
     from services.agents import orchestrator
     try:
+        call_fns = {"premium": call_premium, "fast": call_fast, "flash": call_flash}
         result = await orchestrator.run_agent_generation_pipeline(
-            session_id, num_agents, call_claude, db
+            session_id, num_agents, call_fns, db
         )
         if not result:
             return
@@ -1116,7 +1134,7 @@ Return JSON array ONLY:
 ]"""
 
                 try:
-                    response = await call_claude(system_prompt, user_prompt, max_tokens=2000)
+                    response = await call_flash(system_prompt, user_prompt, max_tokens=600)
                     cleaned = clean_json_response(response)
                     posts_data = json.loads(cleaned)
 
@@ -1156,46 +1174,61 @@ Return JSON array ONLY:
 
                 await asyncio.sleep(1.0)
 
-            # Generate replies
+            # Generate replies (batched — ONE call for all replies)
             if round_posts and len(active_agents) >= 2 and round_num >= 2:
                 n_replies = min(3, len(round_posts))
                 reply_agents = random.sample(active_agents, min(n_replies, len(active_agents)))
                 target_posts = random.sample(round_posts, min(n_replies, len(round_posts)))
 
-                for agent, target_post in zip(reply_agents, target_posts):
-                    if target_post["agent_id"] == agent["id"]:
-                        continue
-                    emo_label = get_emotion_label(agent.get("emotional_state",{}).get("valence",0.0))
-                    system_prompt = f"You are {agent['name']} ({agent['personality_type']}), feeling {emo_label}. Write a brief reply. Stay in character."
-                    user_prompt = (
-                        f"You are: {agent['name']} ({agent['occupation']})\n"
-                        f"Replying to {target_post['agent_name']}: \"{target_post['content']}\"\n"
-                        f"Platform: {target_post['platform']}\nWrite 1-2 sentences. Output ONLY the reply."
-                    )
+                # Filter out self-replies and build batch
+                reply_pairs = [(a, t) for a, t in zip(reply_agents, target_posts) if t["agent_id"] != a["id"]]
+
+                if reply_pairs:
+                    agents_desc = "\n".join([
+                        f"Agent {i+1}: {a['name']} ({a['occupation']}, {a['personality_type']}) replying to {t['agent_name']}: \"{t['content'][:80]}\""
+                        for i, (a, t) in enumerate(reply_pairs)
+                    ])
+                    system_prompt = "You are simulating social media users replying to posts. Write brief in-character replies. Return ONLY a valid JSON array."
+                    user_prompt = f"""Write a short 1-sentence reply for each agent below.
+
+{agents_desc}
+
+Return JSON array ONLY:
+[{{"agent_index": 1, "content": "reply text"}}, ...]"""
+
                     try:
-                        reply_content = (await call_claude(system_prompt, user_prompt, max_tokens=150)).strip()
-                        reply = {
-                            "session_id": session_id,
-                            "round": round_num,
-                            "agent_id": agent["id"],
-                            "agent_name": agent["name"],
-                            "agent_emoji": agent.get("avatar_emoji", ""),
-                            "platform": target_post["platform"],
-                            "content": reply_content,
-                            "post_type": "reply",
-                            "reply_to": target_post["agent_name"],
-                            "is_hub_post": agent["id"] in hub_ids,
-                            "influence_level": agent.get("influence_level", 5),
-                            "belief_position": agent.get("belief_state", {}).get("position", 0.0),
-                            "emotional_valence": agent.get("emotional_state", {}).get("valence", 0.0),
-                            "created_at": datetime.now(timezone.utc).isoformat()
-                        }
-                        await db.sim_posts.insert_one(reply)
-                        all_posts.append(reply)
-                        round_posts.append(reply)
+                        response = await call_flash(system_prompt, user_prompt, max_tokens=200)
+                        cleaned = clean_json_response(response)
+                        replies_data = json.loads(cleaned)
+
+                        for item in replies_data:
+                            idx = item.get("agent_index", 1) - 1
+                            if 0 <= idx < len(reply_pairs):
+                                agent, target_post = reply_pairs[idx]
+                                reply_content = item.get("content", "").strip()
+                                if not reply_content:
+                                    continue
+                                reply = {
+                                    "session_id": session_id,
+                                    "round": round_num,
+                                    "agent_id": agent["id"],
+                                    "agent_name": agent["name"],
+                                    "agent_emoji": agent.get("avatar_emoji", ""),
+                                    "platform": target_post["platform"],
+                                    "content": reply_content,
+                                    "post_type": "reply",
+                                    "reply_to": target_post["agent_name"],
+                                    "is_hub_post": agent["id"] in hub_ids,
+                                    "influence_level": agent.get("influence_level", 5),
+                                    "belief_position": agent.get("belief_state", {}).get("position", 0.0),
+                                    "emotional_valence": agent.get("emotional_state", {}).get("valence", 0.0),
+                                    "created_at": datetime.now(timezone.utc).isoformat()
+                                }
+                                await db.sim_posts.insert_one(reply)
+                                all_posts.append(reply)
+                                round_posts.append(reply)
                     except Exception as e:
-                        logger.error(f"[Sim] Reply error: {e}")
-                    await asyncio.sleep(0.3)
+                        logger.error(f"[Sim] Batched reply error: {e}")
 
             # Tier 2: Generate clone echo posts
             if clones:
@@ -1259,12 +1292,12 @@ Return JSON array ONLY:
                     sample_posts = "\n".join([f"{p['agent_name']}: {p['content'][:100]}" for p in round_posts[:6]])
                     emo_temp2 = get_emotional_temperature(agents)
                     belief_sum = get_belief_summary(agents)
-                    narrative = await call_claude(
+                    narrative = await call_flash(
                         "You are a simulation narrator. Write concise 1-2 sentence round summaries.",
                         f"Round {round_num}/{num_rounds} on: {query}\nPosts:\n{sample_posts}\n"
                         f"Emotion: {emo_temp2['state']} | Support: {belief_sum['support']}% | "
                         f"Opposition: {belief_sum['opposition']}%\nSummarise what happened and what's shifting.",
-                        max_tokens=120
+                        max_tokens=80
                     )
                     round_narratives.append(narrative.strip())
                 except Exception as e:
@@ -1370,7 +1403,8 @@ async def generate_report(session_id: str):
         raise HTTPException(status_code=400, detail="Simulation not complete")
 
     try:
-        report = await orchestrator.run_report_pipeline(session_id, call_claude, db)
+        call_fns = {"premium": call_premium, "fast": call_fast, "flash": call_flash}
+        report = await orchestrator.run_report_pipeline(session_id, call_fns, db)
     except json.JSONDecodeError as e:
         logger.error(f"JSON parsing error: {e}")
         raise HTTPException(status_code=500, detail="Failed to parse report from AI response")
@@ -1380,7 +1414,7 @@ async def generate_report(session_id: str):
 
     # Use new critic check_report (pure Python, fast)
     from agents import check_report as agents_check_report
-    quality = await agents_check_report(report, call_claude)
+    quality = await agents_check_report(report, call_fast)
     report["quality_score"] = quality.get("quality_score", 6)
     report["quality_feedback"] = quality.get("recommendation", "")
     report["overconfident"] = quality.get("overconfident", False)
@@ -1722,7 +1756,7 @@ Answer questions about the simulation findings. Be authoritative but acknowledge
 User: {request.message}"""
 
     try:
-        response = await call_claude(system_prompt, user_prompt, max_tokens=400)
+        response = await call_fast(system_prompt, user_prompt, max_tokens=200)
         response_text = response.strip()
     except Exception as e:
         logger.error(f"Chat error: {e}")

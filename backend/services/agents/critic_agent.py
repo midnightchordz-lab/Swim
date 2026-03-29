@@ -64,7 +64,7 @@ Return JSON:
 }}"""
     try:
         from services.agents.common import clean_json
-        raw = await call_claude_fn(system_prompt, user_prompt, max_tokens=300)
+        raw = await call_claude_fn(system_prompt, user_prompt, max_tokens=200)
         return json.loads(clean_json(raw))
     except Exception as e:
         logger.warning(f"Critic check_brief failed: {e}")
@@ -93,7 +93,7 @@ Return JSON:
 }}"""
     try:
         from services.agents.common import clean_json
-        raw = await call_claude_fn(system_prompt, user_prompt, max_tokens=300)
+        raw = await call_claude_fn(system_prompt, user_prompt, max_tokens=200)
         result = json.loads(clean_json(raw))
         result["overconfident"] = overconfident or result.get("overconfident", False)
         return result

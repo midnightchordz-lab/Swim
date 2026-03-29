@@ -34,7 +34,7 @@ Question being debated: {query}
 Write 2 sentences summarizing the key dynamics, shifts, or tensions in this round."""
 
     try:
-        narrative = await call_claude_fn(system_prompt, user_prompt, max_tokens=150)
+        narrative = await call_claude_fn(system_prompt, user_prompt, max_tokens=80)
         return narrative.strip()
     except Exception as e:
         logger.warning(f"Narrative generation failed for round {round_num}: {e}")
@@ -114,7 +114,7 @@ Platform: {platform}
 Write ONE authentic post as {agent['name']}. Output ONLY the post content."""
 
             try:
-                response = await call_claude_fn(system_prompt, user_prompt, max_tokens=200)
+                response = await call_claude_fn(system_prompt, user_prompt, max_tokens=150)
                 content = response.strip()
 
                 post = {
@@ -163,7 +163,7 @@ Platform: {platform}
 Write a brief reply (1-2 sentences). Output ONLY the reply content."""
 
                 try:
-                    response = await call_claude_fn(system_prompt, user_prompt, max_tokens=150)
+                    response = await call_claude_fn(system_prompt, user_prompt, max_tokens=100)
                     reply = {
                         "session_id": session_id,
                         "round": round_num,

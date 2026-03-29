@@ -18,13 +18,16 @@ logger = logging.getLogger(__name__)
 async def run_live_intel_pipeline(session_id: str, topic: str, horizon: str,
                                   prediction_query: str, web_context: str,
                                   yahoo_headlines: str, financial_context: str,
-                                  financial_data: dict, call_claude_fn, db):
+                                  financial_data: dict, call_fns: dict, db):
     """Run the Intel + Graph pipeline for live intelligence mode.
-    Steps: Intel Agent → Critic check → Graph Agent"""
+    Steps: Intel Agent (premium) -> Critic check (fast) -> Graph Agent (premium)"""
+
+    call_premium = call_fns["premium"]
+    call_fast = call_fns["fast"]
 
     state = {"pipeline_status": "intel"}
 
-    # Step 1: Intel Agent generates brief
+    # Step 1: Intel Agent generates brief (PREMIUM — deep reasoning)
     logger.info(f"[Orchestrator] Step 1: Intel Agent for session {session_id}")
     await db.sessions.update_one(
         {"id": session_id},
@@ -34,19 +37,19 @@ async def run_live_intel_pipeline(session_id: str, topic: str, horizon: str,
     intel_brief = await intel_agent.run(
         topic, horizon, prediction_query,
         web_context, yahoo_headlines, financial_context,
-        call_claude_fn
+        call_premium
     )
     state["intel_brief"] = intel_brief
 
-    # Step 1b: Critic checks brief for bias
-    logger.info(f"[Orchestrator] Step 1b: Critic checking brief bias")
+    # Step 1b: Critic checks brief for bias (FAST — simple evaluation)
+    logger.info("[Orchestrator] Step 1b: Critic checking brief bias")
     await db.sessions.update_one(
         {"id": session_id},
         {"$set": {"live_progress": "Evaluating brief quality..."}}
     )
 
     critique = await critic_agent.check_brief(
-        intel_brief.get("summary", ""), call_claude_fn
+        intel_brief.get("summary", ""), call_fast
     )
     state["brief_critique"] = critique
 
@@ -57,7 +60,7 @@ async def run_live_intel_pipeline(session_id: str, topic: str, horizon: str,
             {"$set": {"live_progress": "Rewriting brief to reduce bias..."}}
         )
         intel_brief = await intel_agent.rewrite(
-            intel_brief, critique.get("feedback", ""), topic, call_claude_fn
+            intel_brief, critique.get("feedback", ""), topic, call_fast
         )
         state["intel_brief"] = intel_brief
         state["brief_rewritten"] = True
@@ -66,14 +69,14 @@ async def run_live_intel_pipeline(session_id: str, topic: str, horizon: str,
     if financial_data and financial_data.get("has_data"):
         intel_brief["verified_market_data"] = financial_data["data"]
 
-    # Step 2: Graph Agent extracts knowledge graph
+    # Step 2: Graph Agent extracts knowledge graph (PREMIUM — structured extraction)
     logger.info(f"[Orchestrator] Step 2: Graph Agent for session {session_id}")
     await db.sessions.update_one(
         {"id": session_id},
         {"$set": {"live_progress": "Extracting knowledge graph..."}}
     )
 
-    graph = await graph_agent.run(intel_brief, prediction_query, call_claude_fn)
+    graph = await graph_agent.run(intel_brief, prediction_query, call_premium)
     state["graph"] = graph
     state["pipeline_status"] = "graph_ready"
 
@@ -81,9 +84,12 @@ async def run_live_intel_pipeline(session_id: str, topic: str, horizon: str,
 
 
 async def run_agent_generation_pipeline(session_id: str, num_agents: int,
-                                        call_claude_fn, db):
+                                        call_fns: dict, db):
     """Run the Persona Agent pipeline with diversity check.
-    Steps: Persona Agent → Critic diversity check → Rebalance if needed"""
+    Steps: Persona Agent (premium) -> Critic diversity check (pure Python) -> Rebalance (fast)"""
+
+    call_premium = call_fns["premium"]
+    call_fast = call_fns["fast"]
 
     session = await db.sessions.find_one({"id": session_id})
     if not session:
@@ -105,20 +111,20 @@ async def run_agent_generation_pipeline(session_id: str, num_agents: int,
         if stakeholders:
             intel_context = f"\nKey Stakeholders from live data: {json.dumps(stakeholders[:5])}"
 
-    # Step 3: Persona Agent generates agents
+    # Step 3: Persona Agent generates agents (PREMIUM — creative persona generation)
     logger.info(f"[Orchestrator] Step 3: Persona Agent ({num_agents} agents)")
     agents = await persona_agent.run(
         graph, query, num_agents, topic_category, data_mode, intel_context,
-        call_claude_fn
+        call_premium
     )
 
-    # Step 3b: Critic scores diversity
+    # Step 3b: Critic scores diversity (pure Python — no LLM)
     diversity = critic_agent.score_diversity(agents)
     logger.info(f"[Orchestrator] Diversity score: {diversity}")
 
     if diversity < 0.6:
         logger.info(f"[Orchestrator] Low diversity ({diversity}), rebalancing...")
-        agents = await persona_agent.rebalance(agents, graph, query, call_claude_fn)
+        agents = await persona_agent.rebalance(agents, graph, query, call_fast)
         diversity = critic_agent.score_diversity(agents)
         logger.info(f"[Orchestrator] Post-rebalance diversity: {diversity}")
 
@@ -126,9 +132,11 @@ async def run_agent_generation_pipeline(session_id: str, num_agents: int,
 
 
 async def run_simulation_pipeline(session_id: str, num_rounds: int,
-                                  call_claude_fn, db):
+                                  call_fns: dict, db):
     """Run the Simulation Director pipeline.
-    Steps: Sim Director (with per-round critic checks) → Report Agent → Critic quality check"""
+    Steps: Sim Director (flash) -> Report Agent (premium) -> Critic quality check (fast)"""
+
+    call_flash = call_fns["flash"]
 
     session = await db.sessions.find_one({"id": session_id})
     if not session:
@@ -138,10 +146,10 @@ async def run_simulation_pipeline(session_id: str, num_rounds: int,
     graph = json.loads(session["graph_json"])
     query = session["prediction_query"]
 
-    # Step 4: Simulation Director runs rounds
+    # Step 4: Simulation Director runs rounds (FLASH — bulk generation)
     logger.info(f"[Orchestrator] Step 4: Simulation Director ({num_rounds} rounds)")
     agents, round_narratives = await sim_director.run(
-        session_id, agents, graph, query, num_rounds, db, call_claude_fn
+        session_id, agents, graph, query, num_rounds, db, call_flash
     )
 
     # Store round narratives and updated agents
@@ -160,9 +168,12 @@ async def run_simulation_pipeline(session_id: str, num_rounds: int,
     logger.info(f"[Orchestrator] Simulation complete with {len(round_narratives)} round narratives")
 
 
-async def run_report_pipeline(session_id: str, call_claude_fn, db) -> dict:
+async def run_report_pipeline(session_id: str, call_fns: dict, db) -> dict:
     """Run the Report Agent + Critic pipeline.
-    Steps: Report Agent → Critic quality check → Return report with quality_score"""
+    Steps: Report Agent (premium) -> Critic quality check (fast)"""
+
+    call_premium = call_fns["premium"]
+    call_fast = call_fns["fast"]
 
     session = await db.sessions.find_one({"id": session_id})
     if not session:
@@ -190,15 +201,15 @@ async def run_report_pipeline(session_id: str, call_claude_fn, db) -> dict:
         {"session_id": session_id}
     ).sort([("round", 1), ("created_at", 1)]).to_list(1000)
 
-    # Step 5: Report Agent generates report
-    logger.info(f"[Orchestrator] Step 5: Report Agent")
+    # Step 5: Report Agent generates report (PREMIUM — deep analysis)
+    logger.info("[Orchestrator] Step 5: Report Agent")
     report = await report_agent.run(
-        agents, graph, posts, query, round_narratives, total_rounds, call_claude_fn
+        agents, graph, posts, query, round_narratives, total_rounds, call_premium
     )
 
-    # Step 5b: Critic evaluates report quality
-    logger.info(f"[Orchestrator] Step 5b: Critic evaluating report quality")
-    quality = await critic_agent.check_report(report, call_claude_fn)
+    # Step 5b: Critic evaluates report quality (FAST — quick evaluation)
+    logger.info("[Orchestrator] Step 5b: Critic evaluating report quality")
+    quality = await critic_agent.check_report(report, call_fast)
     report["quality_score"] = quality.get("quality_score", 6)
     report["quality_feedback"] = quality.get("feedback", "")
     report["overconfident"] = quality.get("overconfident", False)

@@ -1720,10 +1720,13 @@ async def download_report_pdf(session_id: str):
     report = json.loads(session["report_json"])
     query = session.get("prediction_query", "N/A")
     
-    def safe_text(text, max_len=500):
+    def safe_text(text, max_len=800):
         """Sanitize text for PDF output - removes Unicode characters not supported by Helvetica"""
         if not text:
             return "N/A"
+        # Handle lists/arrays by joining them
+        if isinstance(text, list):
+            text = "; ".join(str(item) for item in text)
         text = str(text)
         
         # Replace common Unicode characters with ASCII equivalents
@@ -1857,13 +1860,16 @@ async def download_report_pdf(session_id: str):
         pdf.cell(0, 8, "Key Factions:", ln=True)
         pdf.set_font("Helvetica", "", 10)
         for faction in factions:
-            name = safe_text(faction.get('name', 'N/A'), 50)
+            name = safe_text(faction.get('name', 'N/A'), 80)
             size = safe_text(faction.get('size', 'N/A'), 20)
-            stance = safe_text(faction.get('stance', 'N/A'), 200)
+            stance = safe_text(faction.get('stance', 'N/A'), 300)
+            arguments = safe_text(faction.get('key_arguments', []), 400)
             pdf.set_font("Helvetica", "B", 10)
             pdf.cell(0, 6, f"- {name} ({size})", ln=True)
             pdf.set_font("Helvetica", "", 10)
             pdf.multi_cell(190, 5, f"  {stance}")
+            if arguments and arguments != "N/A":
+                pdf.multi_cell(190, 5, f"  Arguments: {arguments}")
     pdf.ln(5)
     
     # Risk Factors
@@ -1875,9 +1881,9 @@ async def download_report_pdf(session_id: str):
         pdf.set_font("Helvetica", "", 10)
         pdf.set_text_color(0, 0, 0)
         for risk in risks:
-            likelihood = safe_text(risk.get("likelihood", "N/A"), 20)
-            factor = safe_text(risk.get("factor", "N/A"), 100)
-            impact = safe_text(risk.get("impact", "N/A"), 200)
+            likelihood = safe_text(risk.get("likelihood", "N/A"), 30)
+            factor = safe_text(risk.get("factor", "N/A"), 300)
+            impact = safe_text(risk.get("impact", "N/A"), 400)
             pdf.set_font("Helvetica", "B", 10)
             pdf.cell(0, 6, f"[{likelihood}] {factor}", ln=True)
             pdf.set_font("Helvetica", "", 10)
@@ -1894,8 +1900,8 @@ async def download_report_pdf(session_id: str):
         pdf.set_text_color(0, 0, 0)
         for point in turning_points:
             round_num = point.get('round', 'N/A')
-            description = safe_text(point.get('description', 'N/A'), 150)
-            impact = safe_text(point.get('impact', 'N/A'), 200)
+            description = safe_text(point.get('description', 'N/A'), 300)
+            impact = safe_text(point.get('impact', 'N/A'), 400)
             pdf.set_font("Helvetica", "B", 10)
             pdf.cell(0, 6, f"Round {round_num}: {description}", ln=True)
             pdf.set_font("Helvetica", "", 10)
@@ -1912,8 +1918,8 @@ async def download_report_pdf(session_id: str):
         pdf.set_text_color(0, 0, 0)
         for scenario in scenarios:
             prob = scenario.get("probability", 0) or 0
-            scenario_name = safe_text(scenario.get('scenario', 'N/A'), 100)
-            conditions = safe_text(scenario.get('conditions', 'N/A'), 200)
+            scenario_name = safe_text(scenario.get('scenario', 'N/A'), 200)
+            conditions = safe_text(scenario.get('conditions', 'N/A'), 400)
             pdf.set_font("Helvetica", "B", 10)
             pdf.cell(0, 6, f"{scenario_name} ({int(prob * 100)}% probability)", ln=True)
             pdf.set_font("Helvetica", "", 10)
@@ -1930,12 +1936,12 @@ async def download_report_pdf(session_id: str):
         pdf.set_text_color(0, 0, 0)
         for highlight in highlights:
             pdf.set_font("Helvetica", "B", 10)
-            name = safe_text(highlight.get('agent_name', 'N/A'), 50)
+            name = safe_text(highlight.get('agent_name', 'N/A'), 80)
             pdf.cell(0, 6, f"- {name}", ln=True)
             pdf.set_font("Helvetica", "", 10)
-            role = safe_text(highlight.get('role_in_simulation', 'N/A'), 200)
+            role = safe_text(highlight.get('role_in_simulation', 'N/A'), 300)
             pdf.multi_cell(190, 5, f"Role: {role}")
-            quote = safe_text(highlight.get("notable_quote", ""), 150)
+            quote = safe_text(highlight.get("notable_quote", ""), 300)
             if quote and quote != "N/A":
                 pdf.set_font("Helvetica", "I", 10)
                 pdf.multi_cell(190, 5, f'"{quote}"')

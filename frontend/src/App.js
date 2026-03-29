@@ -313,7 +313,7 @@ const KnowledgeGraph = ({ graph, onRefresh }) => {
         if (containerRef.current) {
           setDimensions({
             width: containerRef.current.offsetWidth,
-            height: Math.min(500, window.innerHeight - 300)
+            height: Math.min(420, window.innerHeight - 360)
           });
         }
       };
@@ -1263,7 +1263,7 @@ const AgentStep = ({ sessionId, graph, onComplete }) => {
           {/* Context Summary */}
           <div className="bg-gray-950 rounded-lg p-3 mb-4 border border-gray-800">
             <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">World Context</p>
-            <p className="text-sm text-gray-300">{graph?.summary}</p>
+            <p className="text-sm text-gray-300 line-clamp-4">{graph?.summary}</p>
           </div>
 
           {/* Agent Count Slider */}

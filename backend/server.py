@@ -396,7 +396,7 @@ async def call_fast(system_prompt: str, user_prompt: str, max_tokens: int = 400)
 
 async def call_flash(system_prompt: str, user_prompt: str, max_tokens: int = 400) -> str:
     """Gemini Flash — cheapest, bulk generation (posts, replies, narratives)."""
-    return await _llm_call("gemini", "gemini-2.5-flash-lite", system_prompt, user_prompt, max_tokens)
+    return await _llm_call("gemini", "gemini-2.5-flash", system_prompt, user_prompt, max_tokens)
 
 
 async def call_claude(system_prompt: str, user_prompt: str, max_tokens: int = 1500, image_data: dict = None, retries: int = 3) -> str:

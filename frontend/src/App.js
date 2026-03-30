@@ -225,7 +225,7 @@ const SentimentChart = ({ posts }) => {
   );
 };
 
-const Header = ({ onNewSimulation, hasSession, grokActive }) => (
+const Header = ({ onNewSimulation, hasSession, grokActive, onShowAccuracy }) => (
   <header className="app-header">
     <div className="logo-wrap">
       <div className="logo-icon-box">
@@ -255,6 +255,15 @@ const Header = ({ onNewSimulation, hasSession, grokActive }) => (
           Grok Active
         </span>
       )}
+      <button
+        data-testid="accuracy-dashboard-btn"
+        onClick={onShowAccuracy}
+        className="btn-ghost"
+        style={{padding:'5px 12px',fontSize:'11px',fontFamily:'var(--mono)'}}
+      >
+        <Target className="w-3.5 h-3.5 inline mr-1" />
+        Accuracy
+      </button>
       <span className="badge-live" data-testid="system-status">System Online</span>
       {hasSession && (
         <button
@@ -2051,6 +2060,9 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
 
   return (
     <div className="animate-fade-in space-y-4">
+      {/* Prediction Outcome Badge */}
+      <PredictionOutcomeBadge sessionId={sessionId} />
+
       {/* Header with Confidence */}
       <div className="bg-panel border border-sw rounded-xl p-5">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -2536,6 +2548,207 @@ const ChatPanel = ({ sessionId, agents, report }) => {
   );
 };
 
+// ── ACCURACY DASHBOARD ──────────────────────────────────────────────────────
+const AccuracyDashboard = ({ data, onClose }) => {
+  if (!data) return null;
+  const wr = data.win_rate || 0;
+  const getWrColor = (rate) => rate >= 65 ? 'var(--cyan)' : rate >= 50 ? '#eab308' : '#ef4444';
+  const wrColor = getWrColor(wr);
+
+  return (
+    <div className="animate-fade-in space-y-4" style={{maxWidth:'1100px',margin:'0 auto'}}>
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 style={{fontFamily:'var(--display)',fontSize:'24px',fontWeight:'800',color:'var(--text)'}}>
+            Prediction Accuracy
+          </h1>
+          <p className="text-xs mt-1" style={{color:'var(--text2)',fontFamily:'var(--mono)'}}>
+            {data.total_predictions} tracked · {data.pending} pending
+          </p>
+        </div>
+        <button data-testid="accuracy-back-btn" className="btn-ghost" onClick={onClose} style={{fontSize:'13px'}}>
+          Back to Simulation
+        </button>
+      </div>
+
+      {/* Global stats row */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          { val: `${wr}%`, lab: 'Win Rate', color: wrColor },
+          { val: data.total_predictions, lab: 'Total Predictions', color: 'var(--text)' },
+          { val: data.total_correct, lab: 'Correct Calls', color: 'var(--cyan)' },
+          { val: data.pending, lab: 'Awaiting Outcome', color: '#eab308' },
+        ].map((s, i) => (
+          <div key={i} data-testid={`accuracy-stat-${i}`} className="bg-panel border border-sw rounded-xl p-4 text-center">
+            <div style={{fontFamily:'var(--mono)',fontSize:'26px',fontWeight:'700',color:s.color}}>{s.val}</div>
+            <div className="text-[10px] mt-1 uppercase tracking-wider" style={{color:'var(--text3)'}}>{s.lab}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Domain breakdown */}
+      {Object.keys(data.domain_breakdown).length > 0 && (
+        <div className="bg-panel border border-sw rounded-xl overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-sw" style={{background:'var(--bg3)',fontFamily:'var(--mono)',fontSize:'10px',color:'var(--text3)',textTransform:'uppercase',letterSpacing:'.06em'}}>
+            Accuracy by Domain
+          </div>
+          {Object.entries(data.domain_breakdown).map(([domain, stats]) => (
+            <div key={domain} className="flex items-center gap-3 px-4 py-3 border-b border-sw last:border-b-0">
+              <div className="w-28 text-xs capitalize" style={{color:'var(--text2)'}}>{domain.replace('_', ' ')}</div>
+              <div className="flex-1 h-2 rounded-full overflow-hidden" style={{background:'var(--bg3)'}}>
+                <div style={{width:`${stats.win_rate}%`,height:'100%',background:getWrColor(stats.win_rate),borderRadius:'4px',transition:'width .6s ease'}} />
+              </div>
+              <div style={{fontFamily:'var(--mono)',fontSize:'12px',fontWeight:'700',width:'48px',textAlign:'right',color:getWrColor(stats.win_rate)}}>{stats.win_rate}%</div>
+              <div className="text-[10px] w-14 text-right" style={{color:'var(--text3)'}}>{stats.correct}/{stats.total}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Calibration chart */}
+        {data.calibration?.length > 0 && (
+          <div className="bg-panel border border-sw rounded-xl p-4">
+            <div style={{fontFamily:'var(--mono)',fontSize:'10px',color:'var(--text3)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'10px'}}>
+              Calibration — Predicted vs Actual (%)
+            </div>
+            <div className="text-[10px] italic mb-2" style={{color:'var(--text3)'}}>Perfect = diagonal. Above = overconfident.</div>
+            {data.calibration.map((row, i) => (
+              <div key={i} className="flex items-center gap-2 mb-1.5">
+                <div style={{width:'50px',fontSize:'10px',color:'var(--text3)',fontFamily:'var(--mono)'}}>{row.bucket}</div>
+                <div className="flex-1 relative h-4 rounded" style={{background:'rgba(255,255,255,0.03)'}}>
+                  <div className="absolute inset-0 rounded" style={{width:`${row.predicted_pct}%`,background:'rgba(255,255,255,0.06)'}} />
+                  <div className="absolute top-0.5 bottom-0.5 left-0 rounded" style={{width:`${row.actual_pct}%`,background:getWrColor(row.actual_pct),transition:'width .6s ease'}} />
+                </div>
+                <div style={{fontFamily:'var(--mono)',fontSize:'11px',width:'36px',textAlign:'right',color:getWrColor(row.actual_pct)}}>{row.actual_pct}%</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Top agents */}
+        {data.top_agents?.length > 0 && (
+          <div className="bg-panel border border-sw rounded-xl p-4">
+            <div style={{fontFamily:'var(--mono)',fontSize:'10px',color:'var(--text3)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'10px'}}>
+              Top Predicting Agents
+            </div>
+            {data.top_agents.slice(0, 5).map((agent, i) => (
+              <div key={i} className="flex items-center gap-2 mb-2">
+                <div style={{fontFamily:'var(--mono)',fontSize:'10px',color:'var(--text3)',width:'16px'}}>{i + 1}</div>
+                <div className="flex-1">
+                  <div className="text-xs font-semibold" style={{color:'var(--text)'}}>{agent.agent_name}</div>
+                  <div className="text-[10px]" style={{color:'var(--text3)'}}>{agent.personality_type}</div>
+                </div>
+                <div style={{fontFamily:'var(--mono)',fontSize:'12px',fontWeight:'700',color:getWrColor(agent.win_rate)}}>{agent.win_rate}%</div>
+                <div className="text-[10px]" style={{color:'var(--text3)'}}>({agent.correct_predictions}/{agent.total_predictions})</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Recent predictions */}
+      {data.recent?.length > 0 && (
+        <div className="bg-panel border border-sw rounded-xl overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-sw" style={{background:'var(--bg3)',fontFamily:'var(--mono)',fontSize:'10px',color:'var(--text3)',textTransform:'uppercase',letterSpacing:'.06em'}}>
+            Recent Predictions
+          </div>
+          {data.recent.map((rec, i) => (
+            <div key={i} className="flex items-center gap-3 px-4 py-2.5 border-b border-sw last:border-b-0">
+              <div className="w-2 h-2 rounded-full flex-shrink-0" style={{background:rec.direction_correct ? 'var(--cyan)' : '#ef4444'}} />
+              <div className="flex-1 text-xs truncate" style={{color:'var(--text)'}}>{rec.topic || rec.domain?.replace('_',' ')}</div>
+              <div className="text-[10px] flex-shrink-0" style={{color:'var(--text3)'}}>{rec.domain?.replace('_',' ')}</div>
+              <div className="flex-shrink-0" style={{fontFamily:'var(--mono)',fontSize:'11px',color:rec.direction_correct ? 'var(--cyan)' : '#ef4444'}}>
+                {rec.predicted_direction} → {rec.actual_direction || '?'}
+              </div>
+              <div style={{fontFamily:'var(--mono)',fontSize:'11px',color:'var(--text3)',flexShrink:0}}>
+                {rec.composite_score != null ? `${(rec.composite_score * 100).toFixed(0)} pts` : 'pending'}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Empty state */}
+      {data.total_predictions === 0 && (
+        <div className="bg-panel border border-sw rounded-xl p-8 text-center">
+          <Target className="w-10 h-10 mx-auto mb-3" style={{color:'var(--text3)'}} />
+          <p className="text-sm" style={{color:'var(--text2)'}}>No predictions tracked yet.</p>
+          <p className="text-xs mt-1" style={{color:'var(--text3)'}}>Complete a simulation to start tracking accuracy.</p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+
+// ── PREDICTION OUTCOME BADGE ────────────────────────────────────────────────
+const PredictionOutcomeBadge = ({ sessionId }) => {
+  const [outcome, setOutcome] = useState(null);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    const fetchOutcome = async () => {
+      try {
+        const res = await axios.get(`${API}/sessions/${sessionId}/prediction-outcome`);
+        if (res.data.status !== 'not_tracked') setOutcome(res.data);
+      } catch (e) { /* ignore */ }
+    };
+    fetchOutcome();
+    const interval = setInterval(fetchOutcome, 60000);
+    return () => clearInterval(interval);
+  }, [sessionId]);
+
+  if (!outcome) return null;
+
+  if (outcome.status === 'scored') {
+    const isCorrect = outcome.direction_correct;
+    const score = outcome.composite_score || 0;
+    return (
+      <div data-testid="prediction-outcome-badge" className="rounded-xl p-4 mb-4 flex items-center gap-3 flex-wrap" style={{
+        border: `1px solid ${isCorrect ? 'rgba(0,245,196,0.3)' : 'rgba(239,68,68,0.3)'}`,
+        background: isCorrect ? 'rgba(0,245,196,0.05)' : 'rgba(239,68,68,0.05)',
+      }}>
+        <span className="text-lg" style={{color: isCorrect ? 'var(--cyan)' : '#ef4444'}}>
+          {isCorrect ? '✓' : '✗'}
+        </span>
+        <div className="flex-1">
+          <div className="text-sm font-semibold" style={{color: isCorrect ? 'var(--cyan)' : '#ef4444'}}>
+            Prediction was {isCorrect ? 'CORRECT' : 'INCORRECT'}
+          </div>
+          <div className="text-xs mt-0.5" style={{color:'var(--text2)'}}>
+            Predicted {outcome.predicted_direction} → Actual {outcome.actual_direction || '?'}
+            {outcome.actual_price != null && ` · Price: ${outcome.actual_price.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}`}
+          </div>
+        </div>
+        <div className="text-right">
+          <div style={{fontFamily:'var(--mono)',fontSize:'20px',fontWeight:'700',
+            color: score >= 70 ? 'var(--cyan)' : score >= 40 ? '#eab308' : '#ef4444'
+          }}>{Math.round(score)}</div>
+          <div className="text-[9px]" style={{color:'var(--text3)',fontFamily:'var(--mono)'}}>SCORE / 100</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (outcome.status === 'pending') {
+    return (
+      <div data-testid="prediction-pending-badge" className="rounded-xl p-3 mb-4 flex items-center gap-2" style={{
+        border: '1px solid var(--border)', background: 'var(--bg3)'
+      }}>
+        <div className="w-2 h-2 rounded-full animate-pulse" style={{background:'#eab308'}} />
+        <span className="text-xs" style={{color:'var(--text2)'}}>
+          Prediction tracking active — outcome scored automatically at {outcome.score_at ? new Date(outcome.score_at).toLocaleString() : 'scheduled time'}
+        </span>
+      </div>
+    );
+  }
+
+  return null;
+};
+
+
 // Main App Component
 function App() {
   const [sessionId, setSessionId] = useState(null);
@@ -2548,6 +2761,18 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [grokActive, setGrokActive] = useState(false);
+  const [showAccuracy, setShowAccuracy] = useState(false);
+  const [accuracyData, setAccuracyData] = useState(null);
+
+  const loadAccuracyDashboard = async () => {
+    try {
+      const res = await axios.get(`${API}/predictions/accuracy`);
+      setAccuracyData(res.data);
+      setShowAccuracy(true);
+    } catch (e) {
+      console.error("Accuracy load failed:", e);
+    }
+  };
 
   const createNewSession = async () => {
     setLoading(true);
@@ -2683,8 +2908,14 @@ function App() {
       <div className="grid-overlay" />
       <ParticleBackground />
       <div className="app-shell">
-        <Header onNewSimulation={handleNewSimulation} hasSession={!!sessionId} grokActive={grokActive} />
+        <Header onNewSimulation={handleNewSimulation} hasSession={!!sessionId} grokActive={grokActive} onShowAccuracy={loadAccuracyDashboard} />
         
+        {showAccuracy ? (
+          <main style={{flex:1,padding:'24px 16px',maxWidth:'1400px',margin:'0 auto',width:'100%'}}>
+            <AccuracyDashboard data={accuracyData} onClose={() => setShowAccuracy(false)} />
+          </main>
+        ) : (
+        <>
         <StepIndicator
           currentStep={currentStep}
           completedSteps={completedSteps}
@@ -2733,6 +2964,8 @@ function App() {
             )}
           </div>
         </main>
+        </>
+        )}
 
         {/* Ticker Bar */}
         <div className="ticker-bar">

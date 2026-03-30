@@ -20,6 +20,7 @@ import hashlib
 import urllib.request
 import urllib.parse
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import base64
 import httpx
 
@@ -2498,6 +2499,11 @@ Return JSON with ONLY these fields:
     # Background critic check — runs 30s later, non-blocking
     asyncio.create_task(run_background_critic(session_id, report))
 
+    # Freeze prediction for tracking — non-blocking
+    session_fresh = await db.sessions.find_one({"id": session_id})
+    if session_fresh:
+        asyncio.create_task(freeze_prediction(session_id, report, session_fresh))
+
     return {"report": report}
 
 
@@ -2511,6 +2517,402 @@ async def get_report(session_id: str):
         raise HTTPException(status_code=404, detail="Report not generated yet")
     
     return json.loads(session["report_json"])
+
+
+# ── PREDICTION TRACKING ──────────────────────────────────────────────────────
+
+async def freeze_prediction(session_id: str, report: dict, session: dict):
+    """Extract core prediction from report and save as a trackable record."""
+    try:
+        pred = report.get("prediction", {})
+        outcome_text = pred.get("outcome", "")
+        confidence = pred.get("confidence_score", 0.5)
+        timeframe = pred.get("timeframe", "")
+        domain = report.get("domain", "general")
+
+        stock_data = report.get("stock_data", [])
+        tickers = [s["ticker"] for s in stock_data if s.get("ticker")]
+        topic = session.get("prediction_query", "")
+
+        # Determine horizon in hours
+        horizon_map = {
+            "24 hour": 24, "next 24": 24, "tomorrow": 24,
+            "next session": 10, "intraday": 10,
+            "next week": 168, "week": 168,
+            "next month": 720, "month": 720,
+            "3 month": 2160, "quarter": 2160,
+            "6 month": 4320, "year": 8760,
+        }
+        horizon_hours = 24
+        tf_lower = timeframe.lower()
+        for key, hours in horizon_map.items():
+            if key in tf_lower:
+                horizon_hours = hours
+                break
+
+        # Extract direction from outcome text
+        outcome_lower = outcome_text.lower()
+        predicted_direction = (
+            "UP" if any(w in outcome_lower for w in ["rise", "gain", "rally", "up", "higher", "bullish", "increase", "positive"]) else
+            "DOWN" if any(w in outcome_lower for w in ["fall", "drop", "crash", "down", "lower", "bearish", "decrease", "negative", "decline"]) else
+            "FLAT"
+        )
+
+        # Extract predicted level if present
+        predicted_level = None
+        level_match = re.search(r'[\₹\$]?([\d,]+(?:\.\d+)?)', outcome_text)
+        if level_match:
+            try:
+                predicted_level = float(level_match.group(1).replace(",", ""))
+            except ValueError:
+                predicted_level = None
+
+        baseline_prices = {}
+        for s in stock_data:
+            baseline_prices[s["ticker"]] = s.get("last_close", 0)
+
+        opinion = report.get("opinion_landscape", {})
+        score_at = datetime.now(timezone.utc) + timedelta(hours=horizon_hours)
+
+        record = {
+            "session_id": session_id,
+            "topic": topic,
+            "domain": domain,
+            "tickers": tickers,
+            "baseline_prices": baseline_prices,
+            "predicted_direction": predicted_direction,
+            "predicted_level": predicted_level,
+            "predicted_outcome": outcome_text[:300],
+            "confidence_score": confidence,
+            "support_pct": opinion.get("support_percentage", 50),
+            "opposition_pct": opinion.get("opposition_percentage", 30),
+            "horizon_hours": horizon_hours,
+            "predicted_at": datetime.now(timezone.utc).isoformat(),
+            "score_at": score_at.isoformat(),
+            "status": "pending",
+            "direction_correct": None,
+            "actual_direction": None,
+            "actual_price": None,
+            "level_error_pct": None,
+            "calibration_delta": None,
+            "composite_score": None,
+            "agent_calls": [],
+        }
+
+        # Agent belief positions for accuracy tracking
+        agents = json.loads(session.get("agents_json", "[]"))
+        for agent in agents:
+            bs = agent.get("belief_state", {})
+            position = bs.get("position", 0.0)
+            agent_direction = "UP" if position > 0.1 else "DOWN" if position < -0.1 else "FLAT"
+            record["agent_calls"].append({
+                "agent_id": agent.get("id", ""),
+                "agent_name": agent.get("name", ""),
+                "personality_type": agent.get("personality_type", ""),
+                "predicted_direction": agent_direction,
+                "belief_position": position,
+                "correct": None,
+            })
+
+        await db.prediction_records.insert_one(record)
+        logger.info(f"[Track] Prediction frozen for session {session_id[:8]} — scores at {score_at.strftime('%Y-%m-%d %H:%M UTC')}")
+    except Exception as e:
+        logger.error(f"[Track] Failed to freeze prediction for {session_id[:8]}: {e}")
+
+
+async def score_pending_predictions():
+    """Find all due predictions and score them against real outcomes."""
+    now = datetime.now(timezone.utc)
+    due = await db.prediction_records.find({
+        "status": "pending",
+        "score_at": {"$lte": now.isoformat()}
+    }).sort("score_at").limit(50).to_list(50)
+
+    if not due:
+        return
+
+    logger.info(f"[Scorer] {len(due)} predictions due for scoring")
+
+    try:
+        import yfinance as yf
+    except ImportError:
+        logger.warning("[Scorer] yfinance not installed — skipping")
+        return
+
+    for record in due:
+        try:
+            await score_single_prediction(record, yf)
+        except Exception as e:
+            logger.error(f"[Scorer] Error scoring {record['session_id'][:8]}: {e}")
+            await db.prediction_records.update_one(
+                {"_id": record["_id"]},
+                {"$set": {"status": "error", "error": str(e)}}
+            )
+
+
+async def score_single_prediction(record: dict, yf):
+    """Score one prediction record against real outcomes."""
+    domain = record.get("domain", "general")
+    tickers = record.get("tickers", [])
+    baseline = record.get("baseline_prices", {})
+    predicted_dir = record.get("predicted_direction", "FLAT")
+    predicted_level = record.get("predicted_level")
+    confidence = record.get("confidence_score", 0.5)
+
+    actual_price = None
+    actual_direction = "FLAT"
+    direction_correct = False
+    level_error_pct = None
+
+    # Market predictions: use yfinance
+    if domain in ["stock_market", "crypto", "macro"] and tickers:
+        primary_ticker = tickers[0]
+        baseline_price = baseline.get(primary_ticker, 0)
+
+        def _fetch_current():
+            try:
+                t = yf.Ticker(primary_ticker)
+                hist = t.history(period="2d", interval="1d")
+                if not hist.empty:
+                    return float(hist["Close"].iloc[-1])
+                return None
+            except Exception as e:
+                logger.error(f"[Scorer] yfinance error for {primary_ticker}: {e}")
+                return None
+
+        loop = asyncio.get_event_loop()
+        actual_price = await loop.run_in_executor(None, _fetch_current)
+
+        if actual_price is not None and baseline_price and baseline_price != 0:
+            change_pct = ((actual_price - baseline_price) / baseline_price) * 100
+            actual_direction = "UP" if change_pct > 0.3 else "DOWN" if change_pct < -0.3 else "FLAT"
+            direction_correct = (predicted_dir == actual_direction)
+
+            if predicted_level is not None and predicted_level != 0:
+                level_error_pct = abs(actual_price - predicted_level) / abs(predicted_level) * 100
+
+    # Non-market: use Grok web search
+    elif domain in ["political", "general"]:
+        topic = record.get("topic", "")
+        if topic and XAI_AVAILABLE and os.environ.get("XAI_API_KEY"):
+            try:
+                grok_result = await fetch_grok_web_intel(topic, "current outcome")
+                brief = grok_result.get("brief", "")
+                if brief:
+                    pos_words = ["positive", "bullish", "support", "grew", "increased", "won", "passed", "improved"]
+                    neg_words = ["negative", "bearish", "opposition", "fell", "decreased", "lost", "rejected", "worsened"]
+                    pos = sum(1 for w in pos_words if w in brief.lower())
+                    neg = sum(1 for w in neg_words if w in brief.lower())
+                    actual_direction = "UP" if pos > neg else "DOWN" if neg > pos else "FLAT"
+                    direction_correct = (predicted_dir == actual_direction)
+            except Exception as e:
+                logger.error(f"[Scorer] Grok scoring error: {e}")
+
+    # Composite score: 70% direction, 30% level accuracy
+    direction_score = 1.0 if direction_correct else 0.0
+    level_score = 1.0
+    if level_error_pct is not None:
+        level_score = max(0.0, 1.0 - (min(level_error_pct, 1000.0) / 10.0))
+
+    composite_score = round(direction_score * 0.7 + level_score * 0.3, 3)
+    calibration_delta = round(confidence - direction_score, 3)
+
+    # Score agent predictions
+    scored_agents = []
+    for agent_call in record.get("agent_calls", []):
+        agent_correct = (agent_call.get("predicted_direction") == actual_direction)
+        scored_agents.append({**agent_call, "correct": agent_correct})
+
+        await db.agent_accuracy.update_one(
+            {"agent_name": agent_call["agent_name"], "personality_type": agent_call["personality_type"]},
+            {"$inc": {
+                "total_predictions": 1,
+                "correct_predictions": 1 if agent_correct else 0,
+            }, "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True,
+        )
+
+    now_scored = datetime.now(timezone.utc)
+    update_fields = {
+        "status": "scored",
+        "direction_correct": direction_correct,
+        "actual_direction": actual_direction,
+        "actual_price": actual_price,
+        "level_error_pct": level_error_pct,
+        "calibration_delta": calibration_delta,
+        "composite_score": composite_score,
+        "agent_calls": scored_agents,
+        "scored_at": now_scored.isoformat(),
+    }
+    update_fields = {k: v for k, v in update_fields.items() if v is not None}
+
+    await db.prediction_records.update_one(
+        {"_id": record["_id"]},
+        {"$set": update_fields}
+    )
+
+    # Update global accuracy summary
+    await db.accuracy_summary.update_one(
+        {"_id": "global"},
+        {"$inc": {
+            "total_scored": 1,
+            "total_correct": 1 if direction_correct else 0,
+            f"domain_{domain}": 1,
+            f"domain_{domain}_correct": 1 if direction_correct else 0,
+        }, "$set": {"updated_at": now_scored.isoformat()}},
+        upsert=True,
+    )
+
+    logger.info(
+        f"[Scorer] {record['session_id'][:8]} scored: "
+        f"{predicted_dir} -> actual {actual_direction} | "
+        f"{'CORRECT' if direction_correct else 'WRONG'} | "
+        f"composite={composite_score:.2f}"
+    )
+
+
+# APScheduler — score predictions every 30 minutes
+_prediction_scheduler = AsyncIOScheduler(timezone="UTC")
+_prediction_scheduler.add_job(
+    score_pending_predictions,
+    trigger="interval",
+    minutes=30,
+    id="prediction_scorer",
+    replace_existing=True,
+    max_instances=1,
+)
+
+
+@api_router.get("/predictions/accuracy")
+async def get_accuracy_stats():
+    """Global accuracy stats for the accuracy dashboard."""
+    summary = await db.accuracy_summary.find_one({"_id": "global"}) or {}
+
+    total = summary.get("total_scored", 0)
+    correct = summary.get("total_correct", 0)
+    win_rate = round((correct / total * 100) if total > 0 else 0, 1)
+
+    recent = await db.prediction_records.find(
+        {"status": "scored"},
+        {"_id": 0, "session_id": 1, "topic": 1, "domain": 1,
+         "predicted_direction": 1, "actual_direction": 1,
+         "direction_correct": 1, "composite_score": 1,
+         "confidence_score": 1, "scored_at": 1}
+    ).sort([("scored_at", -1)]).limit(20).to_list(20)
+
+    pending_count = await db.prediction_records.count_documents({"status": "pending"})
+
+    # Domain breakdown
+    domain_stats = {}
+    for d in ["stock_market", "crypto", "political", "macro", "general"]:
+        d_total = summary.get(f"domain_{d}", 0)
+        d_correct = summary.get(f"domain_{d}_correct", 0)
+        if d_total > 0:
+            domain_stats[d] = {
+                "total": d_total,
+                "correct": d_correct,
+                "win_rate": round((d_correct / d_total * 100), 1),
+            }
+
+    # Top agents
+    top_agents_raw = await db.agent_accuracy.find(
+        {}, {"_id": 0}
+    ).sort([("correct_predictions", -1), ("total_predictions", -1)]).limit(10).to_list(10)
+
+    top_agents = []
+    for a in top_agents_raw:
+        total_a = a.get("total_predictions", 1)
+        correct_a = a.get("correct_predictions", 0)
+        top_agents.append({
+            "agent_name": a.get("agent_name"),
+            "personality_type": a.get("personality_type"),
+            "total_predictions": total_a,
+            "correct_predictions": correct_a,
+            "win_rate": round((correct_a / total_a * 100) if total_a > 0 else 0, 1),
+        })
+
+    # Calibration buckets
+    all_scored = await db.prediction_records.find(
+        {"status": "scored", "confidence_score": {"$exists": True}, "direction_correct": {"$exists": True}},
+        {"confidence_score": 1, "direction_correct": 1, "_id": 0}
+    ).limit(1000).to_list(1000)
+
+    buckets = {}
+    for rec in all_scored:
+        conf = float(rec.get("confidence_score", 0.5))
+        bk = f"{int(conf * 10) * 10}-{min((int(conf * 10) + 1) * 10, 100)}%"
+        if bk not in buckets:
+            buckets[bk] = {"total": 0, "correct": 0}
+        buckets[bk]["total"] += 1
+        if rec.get("direction_correct"):
+            buckets[bk]["correct"] += 1
+
+    calibration = []
+    for bk in sorted(buckets.keys(), key=lambda x: int(x.split("-")[0])):
+        data = buckets[bk]
+        calibration.append({
+            "bucket": bk,
+            "predicted_pct": int(bk.split("-")[0]),
+            "actual_pct": round((data["correct"] / data["total"] * 100) if data["total"] > 0 else 0, 1),
+            "total": data["total"],
+        })
+
+    return {
+        "total_predictions": total,
+        "total_correct": correct,
+        "win_rate": win_rate,
+        "pending": pending_count,
+        "domain_breakdown": domain_stats,
+        "top_agents": top_agents,
+        "calibration": calibration,
+        "recent": recent,
+    }
+
+
+@api_router.get("/sessions/{session_id}/prediction-outcome")
+async def get_prediction_outcome(session_id: str):
+    """Returns the scoring result for a specific session's prediction."""
+    record = await db.prediction_records.find_one(
+        {"session_id": session_id},
+        {"_id": 0, "session_id": 1, "status": 1, "predicted_direction": 1,
+         "actual_direction": 1, "actual_price": 1, "direction_correct": 1,
+         "composite_score": 1, "scored_at": 1, "predicted_outcome": 1,
+         "confidence_score": 1, "level_error_pct": 1, "score_at": 1}
+    )
+    if not record:
+        return {"status": "not_tracked"}
+
+    if record.get("composite_score") is not None:
+        record["composite_score"] = round(record["composite_score"] * 100)
+
+    return record
+
+
+@api_router.post("/predictions/score-now/{session_id}")
+async def force_score_prediction(session_id: str):
+    """Manually trigger scoring for a specific prediction (for testing)."""
+    record = await db.prediction_records.find_one({"session_id": session_id})
+    if not record:
+        raise HTTPException(status_code=404, detail="No prediction record found")
+    if record.get("status") == "scored":
+        record.pop("_id", None)
+        if record.get("composite_score") is not None:
+            record["composite_score"] = round(record["composite_score"] * 100)
+        return {"message": "Already scored", "record": record}
+
+    try:
+        import yfinance as yf
+        await score_single_prediction(record, yf)
+        updated = await db.prediction_records.find_one(
+            {"session_id": session_id}, {"_id": 0}
+        )
+        if updated and updated.get("composite_score") is not None:
+            updated["composite_score"] = round(updated["composite_score"] * 100)
+        return {"message": "Scored successfully", "record": updated}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error scoring: {e}")
+
+
 
 
 @api_router.get("/sessions/{session_id}/report/pdf")
@@ -2879,6 +3281,16 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+async def startup_scheduler():
+    if not _prediction_scheduler.running:
+        _prediction_scheduler.start()
+        logger.info("[Scheduler] Prediction scorer started — runs every 30 minutes")
+
+
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    if _prediction_scheduler.running:
+        _prediction_scheduler.shutdown()
+        logger.info("[Scheduler] Prediction scorer stopped")
     client.close()

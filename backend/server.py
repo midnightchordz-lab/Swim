@@ -1065,6 +1065,7 @@ async def get_cached_graph(topic: str, prediction_query: str) -> dict | None:
     return json.loads(cached["graph_json"]) if cached else None
 
 async def save_graph_cache(topic: str, prediction_query: str, graph: dict):
+    from services.agents.graph_agent import strip_runtime_fields
     cache_key = hashlib.md5(
         f"{topic.lower().strip()}{prediction_query[:50].lower()}".encode()
     ).hexdigest()
@@ -1072,7 +1073,7 @@ async def save_graph_cache(topic: str, prediction_query: str, graph: dict):
         {"hash": cache_key},
         {
             "hash": cache_key,
-            "graph_json": json.dumps(graph),
+            "graph_json": json.dumps(strip_runtime_fields(graph)),
             "topic": topic,
             "created_at": datetime.now(timezone.utc).isoformat()
         },
@@ -1205,6 +1206,7 @@ async def upload_document(
 ):
     """Upload document and extract knowledge graph via Graph Agent"""
     from services.agents import graph_agent as graph_agent_module
+    from services.agents.graph_agent import strip_runtime_fields
     session = await db.sessions.find_one({"id": session_id})
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -1229,19 +1231,23 @@ async def upload_document(
         {
             "$set": {
                 "status": "graph_ready",
-                "graph_json": json.dumps(graph),
+                "graph_json": json.dumps(strip_runtime_fields(graph)),
                 "prediction_query": prediction_query,
+                "graph_entity_count": graph.get("entity_count", len(graph.get("entities", []))),
+                "graph_rel_count": graph.get("relationship_count", len(graph.get("relationships", []))),
+                "graph_themes": graph.get("themes", []),
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }
         }
     )
     
-    return {"status": "graph_ready", "graph": graph}
+    return {"status": "graph_ready", "graph": strip_runtime_fields(graph)}
 
 
 async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_query: str):
     """Background task: orchestrator runs Intel + Graph pipeline."""
     from services.agents import orchestrator
+    from services.agents.graph_agent import strip_runtime_fields
     try:
         await db.sessions.update_one(
             {"id": session_id},
@@ -1352,17 +1358,20 @@ async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_q
                     "data_mode": "live",
                     "topic": topic,
                     "prediction_query": prediction_query,
-                    "graph_json": json.dumps(graph),
+                    "graph_json": json.dumps(strip_runtime_fields(graph)),
                     "intel_brief": json.dumps(intel_brief),
                     "fetched_at": web_data["fetched_at"],
                     "live_fetch_status": "completed",
                     "live_progress": "Complete!",
                     "brief_critique": json.dumps(state.get("brief_critique", {})),
+                    "graph_entity_count": graph.get("entity_count", len(graph.get("entities", []))),
+                    "graph_rel_count": graph.get("relationship_count", len(graph.get("relationships", []))),
+                    "graph_themes": graph.get("themes", []),
                     "updated_at": datetime.now(timezone.utc).isoformat()
                 }
             }
         )
-        logger.info(f"Live fetch completed for session {session_id}: {len(graph.get('entities', []))} entities")
+        logger.info(f"Live fetch completed for session {session_id}: {graph.get('entity_count', len(graph.get('entities', [])))} entities, {graph.get('relationship_count', len(graph.get('relationships', [])))} relationships")
 
     except Exception as e:
         logger.error(f"Live fetch failed for session {session_id}: {e}")

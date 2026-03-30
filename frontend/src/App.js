@@ -127,10 +127,22 @@ const ParticleBackground = () => {
 // Entity type colors
 const ENTITY_COLORS = {
   person: "#f97316",
+  Person: "#f97316",
   organization: "#3b82f6",
+  Organization: "#3b82f6",
   faction: "#a855f7",
   concept: "#22c55e",
+  Concept: "#22c55e",
   event: "#ef4444",
+  Event: "#ef4444",
+  Country: "#06b6d4",
+  Company: "#8b5cf6",
+  Policy: "#eab308",
+  Law: "#f59e0b",
+  Metric: "#14b8a6",
+  Asset: "#ec4899",
+  Instrument: "#d946ef",
+  Location: "#84cc16",
   default: "#6b7280"
 };
 
@@ -318,19 +330,20 @@ const KnowledgeGraph = ({ graph, onRefresh }) => {
       type: entity.type,
       stance: entity.stance,
       description: entity.description,
+      importance: entity.importance,
       color: ENTITY_COLORS[entity.type] || ENTITY_COLORS.default,
-      val: 8
+      val: entity.importance === 'High' ? 14 : entity.importance === 'Medium' ? 10 : 6
     }));
 
     const nodeIds = new Set(nodes.map(n => n.id));
     const links = (graph.relationships || [])
-      .filter(rel => nodeIds.has(rel.source) && nodeIds.has(rel.target))
       .map(rel => ({
-        source: rel.source,
-        target: rel.target,
-        label: rel.label,
-        weight: rel.weight || 0.5
-      }));
+        source: rel.source_id || rel.source,
+        target: rel.target_id || rel.target,
+        label: rel.type || rel.label,
+        weight: rel.weight || (rel.strength === 'Strong' ? 0.9 : rel.strength === 'Medium' ? 0.6 : 0.3)
+      }))
+      .filter(link => nodeIds.has(link.source) && nodeIds.has(link.target));
 
     return { nodes, links };
   }, [graph]);
@@ -738,27 +751,57 @@ const UploadStep = ({ sessionId, onComplete }) => {
             
             <div className="grid grid-cols-2 gap-3">
               <div className="rounded-lg p-3" style={{background:'var(--bg3)',border:'1px solid var(--border)'}}>
-                <div className="text-2xl font-bold mono" style={{color:'var(--cyan)'}}>{graph.entities?.length || 0}</div>
+                <div className="text-2xl font-bold mono" style={{color:'var(--cyan)'}}>{graph.entity_count || graph.entities?.length || 0}</div>
                 <div className="text-xs" style={{color:'var(--text2)'}}>Entities</div>
               </div>
               <div className="rounded-lg p-3" style={{background:'var(--bg3)',border:'1px solid var(--border)'}}>
-                <div className="text-2xl font-bold mono" style={{color:'var(--violet)'}}>{graph.relationships?.length || 0}</div>
+                <div className="text-2xl font-bold mono" style={{color:'var(--violet)'}}>{graph.relationship_count || graph.relationships?.length || 0}</div>
                 <div className="text-xs" style={{color:'var(--text2)'}}>Relationships</div>
               </div>
             </div>
+
+            {/* Entity Type Breakdown */}
+            {graph.entities?.length > 0 && (() => {
+              const typeCounts = {};
+              graph.entities.forEach(e => {
+                const t = e.type || 'Unknown';
+                typeCounts[t] = (typeCounts[t] || 0) + 1;
+              });
+              const sorted = Object.entries(typeCounts).sort((a,b) => b[1] - a[1]).slice(0, 6);
+              return (
+                <div className="flex flex-wrap gap-1.5 mt-3">
+                  {sorted.map(([type, count]) => (
+                    <span key={type} className="px-2 py-0.5 text-[10px] rounded-full flex items-center gap-1" style={{background:'var(--bg3)',border:'1px solid var(--border)',color:'var(--text2)'}}>
+                      <span className="w-1.5 h-1.5 rounded-full" style={{backgroundColor: ENTITY_COLORS[type] || ENTITY_COLORS.default}}/>
+                      {type}: {count}
+                    </span>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
 
           {/* Entity Preview */}
           <div className="glass-card" style={{padding:'16px'}}>
             <h4 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{color:'var(--text2)'}}>Key Entities</h4>
             <div className="space-y-2 max-h-48 overflow-y-auto">
-              {graph.entities?.slice(0, 6).map((entity, i) => (
+              {(graph.entities || [])
+                .slice()
+                .sort((a, b) => {
+                  const imp = {High: 0, Medium: 1, Low: 2};
+                  return (imp[a.importance] ?? 2) - (imp[b.importance] ?? 2);
+                })
+                .slice(0, 8)
+                .map((entity, i) => (
                 <div key={i} className="flex items-center gap-2 p-2 rounded" style={{background:'var(--bg3)',border:'1px solid var(--border)'}}>
                   <div 
                     className="w-2 h-2 rounded-full flex-shrink-0" 
                     style={{ backgroundColor: ENTITY_COLORS[entity.type] || ENTITY_COLORS.default }}
                   />
                   <span className="text-sm font-medium truncate" style={{color:'var(--text)'}}>{entity.name}</span>
+                  {entity.importance === 'High' && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-full ml-auto flex-shrink-0" style={{background:'rgba(239,68,68,0.15)',color:'#ef4444',border:'1px solid rgba(239,68,68,0.3)'}}>HIGH</span>
+                  )}
                   <span className="text-[10px] capitalize ml-auto" style={{color:'var(--text3)'}}>{entity.type}</span>
                 </div>
               ))}

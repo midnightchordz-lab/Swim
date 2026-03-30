@@ -11,6 +11,7 @@ from services.agents import (
     critic_agent,
     report_agent,
 )
+from services.agents.graph_agent import ensure_indices
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,16 @@ async def run_live_intel_pipeline(session_id: str, topic: str, horizon: str,
     state["graph"] = graph
     state["pipeline_status"] = "graph_ready"
 
+    # Store graph stats (entity_count, relationship_count) for API responses
+    await db.sessions.update_one(
+        {"id": session_id},
+        {"$set": {
+            "graph_entity_count": graph.get("entity_count", len(graph.get("entities", []))),
+            "graph_rel_count": graph.get("relationship_count", len(graph.get("relationships", []))),
+            "graph_themes": graph.get("themes", []),
+        }}
+    )
+
     return state
 
 
@@ -95,7 +106,7 @@ async def run_agent_generation_pipeline(session_id: str, num_agents: int,
     if not session:
         return None
 
-    graph = json.loads(session["graph_json"])
+    graph = ensure_indices(json.loads(session["graph_json"]))
     query = session["prediction_query"]
     data_mode = session.get("data_mode", "upload")
     topic = session.get("topic", "")
@@ -147,7 +158,7 @@ async def run_simulation_pipeline(session_id: str, num_rounds: int,
         return
 
     agents = json.loads(session["agents_json"])
-    graph = json.loads(session["graph_json"])
+    graph = ensure_indices(json.loads(session["graph_json"]))
     query = session["prediction_query"]
 
     # Step 4: Simulation Director runs rounds (FLASH — bulk generation)
@@ -184,7 +195,7 @@ async def run_report_pipeline(session_id: str, call_fns: dict, db) -> dict:
         return None
 
     agents = json.loads(session["agents_json"])
-    graph = json.loads(session["graph_json"])
+    graph = ensure_indices(json.loads(session["graph_json"]))
     query = session["prediction_query"]
     total_rounds = session.get("total_rounds", 5)
 

@@ -1,10 +1,12 @@
-"""Simulation Director - Runs multi-round simulations with round narratives and herd detection."""
+"""Simulation Director - Runs multi-round simulations with round narratives and herd detection.
+Uses GraphRAG Level 2 retrieval for per-agent grounded context."""
 import json
 import logging
 import random
 import asyncio
 from datetime import datetime, timezone
 from services.agents import critic_agent
+from services.agents.graph_agent import retrieve_graph_context
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +98,16 @@ async def run(session_id: str, agents: list, graph: dict, prediction_query: str,
             memory_context = "\n".join(agent_memories) if agent_memories else "No previous memories."
             platform_instruction = "Keep under 280 characters. Short and punchy." if platform == "Twitter" else "Write 2-4 sentences. More nuanced."
 
-            system_prompt = f"""You are playing the role of {agent['name']}. Stay deeply in character. Write authentic social media posts reflecting this person's background, personality, and stance. Be specific and human."""
+            # GraphRAG Level 2: Per-agent context retrieval
+            agent_graph_context = retrieve_graph_context(
+                graph=graph,
+                agent=agent,
+                recent_posts=recent_posts if recent_posts else [],
+                round_num=round_num,
+                max_entities=6
+            )
+
+            system_prompt = f"""You are playing the role of {agent['name']}. Stay deeply in character. Write authentic social media posts reflecting this person's background, personality, and stance. Reference SPECIFIC entities and facts from your knowledge context. Be specific and human."""
 
             user_prompt = f"""You are: {agent['name']} ({agent['occupation']})
 Personality: {agent['personality_type']}
@@ -104,14 +115,17 @@ Communication Style: {agent['communication_style']}
 Background: {agent['background']}
 Current Stance: {agent['initial_stance']}
 Your recent thoughts: {memory_context}
-World Context: {graph.get('summary', '')[:800]}
+
+YOUR KNOWLEDGE GRAPH CONTEXT (what you know about this world):
+{agent_graph_context}
+
 Prediction Question: {prediction_query}
 Recent posts (last 8): {recent_context}
 Platform: {platform}
 {platform_instruction}
 {narrative_injection}
 
-Write ONE authentic post as {agent['name']}. Output ONLY the post content."""
+Write ONE authentic post as {agent['name']} referencing SPECIFIC entities from YOUR context above. Do not use generic statements. Output ONLY the post content."""
 
             try:
                 response = await call_claude_fn(system_prompt, user_prompt, max_tokens=150)

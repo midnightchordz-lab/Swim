@@ -1374,13 +1374,21 @@ async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_q
         logger.info(f"Live fetch completed for session {session_id}: {graph.get('entity_count', len(graph.get('entities', [])))} entities, {graph.get('relationship_count', len(graph.get('relationships', [])))} relationships")
 
     except Exception as e:
-        logger.error(f"Live fetch failed for session {session_id}: {e}")
+        error_str = str(e)
+        logger.error(f"Live fetch failed for session {session_id}: {error_str}")
+
+        # Provide user-friendly error for budget exhaustion
+        if "budget" in error_str.lower() or "exceeded" in error_str.lower():
+            user_error = "LLM budget exhausted. Please top up via Profile > Universal Key > Add Balance, then try again."
+        else:
+            user_error = error_str[:200]
+
         await db.sessions.update_one(
             {"id": session_id},
             {
                 "$set": {
                     "live_fetch_status": "failed",
-                    "live_fetch_error": str(e)[:200],
+                    "live_fetch_error": user_error,
                     "live_progress": "Failed",
                     "updated_at": datetime.now(timezone.utc).isoformat()
                 }

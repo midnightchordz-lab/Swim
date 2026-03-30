@@ -19,9 +19,10 @@ logger = logging.getLogger(__name__)
 async def run_live_intel_pipeline(session_id: str, topic: str, horizon: str,
                                   prediction_query: str, web_context: str,
                                   yahoo_headlines: str, financial_context: str,
-                                  financial_data: dict, call_fns: dict, db):
+                                  financial_data: dict, call_fns: dict, db,
+                                  skip_graph: bool = False):
     """Run the Intel + Graph pipeline for live intelligence mode.
-    Steps: Intel Agent (premium) -> Critic check (fast) -> Graph Agent (premium)"""
+    Steps: Intel Agent (premium) -> Critic check (fast) -> Graph Agent (premium, skippable)"""
 
     call_premium = call_fns["premium"]
     call_fast = call_fns["fast"]
@@ -70,26 +71,32 @@ async def run_live_intel_pipeline(session_id: str, topic: str, horizon: str,
     if financial_data and financial_data.get("has_data"):
         intel_brief["verified_market_data"] = financial_data["data"]
 
-    # Step 2: Graph Agent extracts knowledge graph (PREMIUM — structured extraction)
-    logger.info(f"[Orchestrator] Step 2: Graph Agent for session {session_id}")
-    await db.sessions.update_one(
-        {"id": session_id},
-        {"$set": {"live_progress": "Extracting knowledge graph..."}}
-    )
+    # Step 2: Graph Agent extracts knowledge graph (FLASH — fast structured extraction)
+    # Skip if caller already has a cached graph
+    if not skip_graph:
+        call_flash = call_fns.get("flash", call_premium)
+        logger.info(f"[Orchestrator] Step 2: Graph Agent (flash) for session {session_id}")
+        await db.sessions.update_one(
+            {"id": session_id},
+            {"$set": {"live_progress": "Extracting knowledge graph..."}}
+        )
 
-    graph = await graph_agent.run(intel_brief, prediction_query, call_premium)
-    state["graph"] = graph
-    state["pipeline_status"] = "graph_ready"
+        graph = await graph_agent.run(intel_brief, prediction_query, call_flash)
+        state["graph"] = graph
+        state["pipeline_status"] = "graph_ready"
 
-    # Store graph stats (entity_count, relationship_count) for API responses
-    await db.sessions.update_one(
-        {"id": session_id},
-        {"$set": {
-            "graph_entity_count": graph.get("entity_count", len(graph.get("entities", []))),
-            "graph_rel_count": graph.get("relationship_count", len(graph.get("relationships", []))),
-            "graph_themes": graph.get("themes", []),
-        }}
-    )
+        # Store graph stats (entity_count, relationship_count) for API responses
+        await db.sessions.update_one(
+            {"id": session_id},
+            {"$set": {
+                "graph_entity_count": graph.get("entity_count", len(graph.get("entities", []))),
+                "graph_rel_count": graph.get("relationship_count", len(graph.get("relationships", []))),
+                "graph_themes": graph.get("themes", []),
+            }}
+        )
+    else:
+        logger.info(f"[Orchestrator] Step 2: Skipped (using cached graph) for session {session_id}")
+        state["pipeline_status"] = "graph_ready"
 
     return state
 

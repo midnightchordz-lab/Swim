@@ -1215,8 +1215,10 @@ async def upload_document(
     text, image_data = await parse_document(file)
     
     try:
+        # Use Gemini Flash for faster graph extraction (image uploads still use Claude for vision)
+        graph_call_fn = call_claude if image_data else call_gemini_flash
         graph = await graph_agent_module.run_from_document(
-            text, prediction_query, call_claude, image_data=image_data
+            text, prediction_query, graph_call_fn, image_data=image_data
         )
     except json.JSONDecodeError as e:
         logger.error(f"JSON parsing error: {e}")
@@ -1329,12 +1331,13 @@ async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_q
         cached_graph = await get_cached_graph(topic, prediction_query)
         if cached_graph:
             logger.info(f"[Cache] Graph cache hit for topic: {topic}")
-            # Still need intel brief from orchestrator, but skip graph extraction
+            # Skip graph extraction — only run Intel + Critic
             call_fns = {"premium": call_claude_premium, "fast": call_claude_fast, "flash": call_gemini_flash}
             state = await orchestrator.run_live_intel_pipeline(
                 session_id, topic, horizon, prediction_query,
                 web_context, yahoo_headlines, financial_context,
-                financial_data, call_fns, db
+                financial_data, call_fns, db,
+                skip_graph=True
             )
             intel_brief = state["intel_brief"]
             graph = cached_graph

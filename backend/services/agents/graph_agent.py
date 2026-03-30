@@ -345,7 +345,7 @@ Prediction Question: {prediction_query}"""
     response = await call_claude_fn(
         GRAPH_EXTRACTION_SYSTEM,
         build_graph_extraction_prompt(content, prediction_query),
-        max_tokens=4000
+        max_tokens=2500
     )
     graph = json.loads(clean_json(response))
 
@@ -361,7 +361,7 @@ individual events, regulatory bodies, market instruments, and abstract forces.""
         response = await call_claude_fn(
             GRAPH_EXTRACTION_SYSTEM,
             build_graph_extraction_prompt(retry_content, prediction_query),
-            max_tokens=4000
+            max_tokens=2500
         )
         graph = json.loads(clean_json(response))
 
@@ -388,14 +388,14 @@ Prediction Question: {prediction_query}
 {build_graph_extraction_prompt("(See image content)", prediction_query)}"""
 
         from services.agents.common import clean_json
-        response = await call_claude_fn(system_prompt, user_prompt, max_tokens=4000, image_data=image_data)
+        response = await call_claude_fn(system_prompt, user_prompt, max_tokens=2500, image_data=image_data)
         graph = json.loads(clean_json(response))
     else:
         from services.agents.common import clean_json
         response = await call_claude_fn(
             GRAPH_EXTRACTION_SYSTEM,
             build_graph_extraction_prompt(text, prediction_query),
-            max_tokens=4000
+            max_tokens=2500
         )
         graph = json.loads(clean_json(response))
 
@@ -407,7 +407,7 @@ Prediction Question: {prediction_query}
 IMPORTANT: Extract at LEAST 20 entities. Be more granular — include all named people,
 organizations, events, policies, metrics, and concepts mentioned in the document."""
 
-            response = await call_claude_fn(GRAPH_EXTRACTION_SYSTEM, retry_prompt, max_tokens=4000)
+            response = await call_claude_fn(GRAPH_EXTRACTION_SYSTEM, retry_prompt, max_tokens=2500)
             graph = json.loads(clean_json(response))
 
     # Post-process: build indices and counts

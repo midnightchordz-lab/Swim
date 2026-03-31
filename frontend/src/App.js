@@ -487,6 +487,7 @@ const UploadStep = ({ sessionId, onComplete }) => {
   const [socialSeed, setSocialSeed] = useState(null);
   const [seedLoading, setSeedLoading] = useState(false);
   const [grokStatus, setGrokStatus] = useState(null);
+  const [domain, setDomain] = useState(null);
 
   const addLog = (message, type = "info") => {
     const time = new Date().toLocaleTimeString('en-US', { hour12: false });
@@ -590,6 +591,7 @@ const UploadStep = ({ sessionId, onComplete }) => {
             addLog(`Found ${data.graph?.relationships?.length || 0} relationships`, "success");
             setGraph(data.graph);
             setIntelBrief(data.intel_brief);
+            if (data.domain) setDomain(data.domain);
             setLoading(false);
           } else if (data.status === "failed") {
             clearInterval(pollInterval);
@@ -660,9 +662,13 @@ const UploadStep = ({ sessionId, onComplete }) => {
 
   const exampleTopics = [
     "Bitcoin price movement",
-    "US Federal Reserve interest rates",
-    "AI regulation in Europe",
-    "Tesla stock outlook",
+    "IPL 2026 winner prediction",
+    "Bengal Election which party wins",
+    "OpenAI GPT-5 impact on tech industry",
+    "Bollywood Pushpa 3 box office",
+    "US China trade war impact",
+    "RBI interest rate decision",
+    "Champions League 2026 winner",
   ];
 
   if (graph) {
@@ -687,6 +693,14 @@ const UploadStep = ({ sessionId, onComplete }) => {
               </h3>
               {mode === "live" && (
                 <span className="badge-live" style={{fontSize:'10px',padding:'3px 8px'}}>LIVE</span>
+              )}
+              {domain && (
+                <span data-testid="domain-badge" style={{
+                  fontSize:'10px',padding:'3px 8px',borderRadius:'99px',
+                  background:'rgba(0,245,196,0.08)',
+                  border:'1px solid rgba(0,245,196,0.2)',
+                  color:'var(--cyan)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.05em'
+                }}>{domain.replace('_',' ')}</span>
               )}
             </div>
             
@@ -1110,7 +1124,7 @@ const UploadStep = ({ sessionId, onComplete }) => {
                         className="field"
                         value={topic}
                         onChange={(e) => setTopic(e.target.value)}
-                        placeholder="e.g., Bitcoin price, Tesla earnings, Fed interest rate decision..."
+                        placeholder="e.g., Bengal Election winner, Bitcoin price, IPL 2026, Tesla earnings..."
                       />
                       <div className="mt-3 flex flex-wrap gap-2">
                         {exampleTopics.map((t, i) => (

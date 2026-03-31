@@ -1,51 +1,40 @@
 # SwarmSim - Product Requirements Document
 
 ## Original Problem Statement
-Build **SwarmSim**, a highly advanced Swarm Intelligence Prediction Engine. Users run complex AI agent simulations to predict outcomes on various topics (financial, political, social).
+Build **SwarmSim**, a Swarm Intelligence Prediction Engine. Users run AI agent simulations to predict outcomes on any topic.
 
 ## Architecture
-- **Frontend**: React (App.js ~2990 lines) + Tailwind CSS + Shadcn/UI
-- **Backend**: FastAPI + MongoDB + APScheduler + Background Tasks
-- **LLM**: Emergent Integrations Proxy (Sonnet 4, Haiku 4.5, Gemini 2.5 Flash) + xAI Grok
-- **Data**: yfinance, Google News RSS, web scraping, Grok X Search, Grok Web Search
+- Frontend: React + Tailwind + Shadcn/UI | Backend: FastAPI + MongoDB + APScheduler
+- LLM: Emergent Proxy (Sonnet 4, Haiku 4.5, Gemini Flash) + xAI Grok
 
 ## Completed Features
 - [x] Core 6-agent orchestrator pipeline
 - [x] Document upload + Live Intelligence mode
 - [x] GraphRAG L1+L2 (importance, tensions, per-agent retrieval)
-- [x] **Graph Chunking** — Multi-chunk extraction + multi-source merge (brief+Twitter+Reddit)
+- [x] Graph Chunking helpers (chunk_content, merge_graph_sources, extract_from_social)
+- [x] **Universal Domain Classifier** — 16 domains, keyword + LLM fallback
+- [x] **Domain-aware agent archetypes** — occupations per domain
+- [x] **Wikipedia + HN context** — free background data enrichment
+- [x] **Non-financial scoring** — Claude-based prediction scoring for all domains
+- [x] **Diverse example topics** — 8 examples across sports, politics, crypto, tech, entertainment
+- [x] **Domain badge** — shows classified domain next to LIVE badge
 - [x] Three-Tier Population Scaling
 - [x] Multi-round simulation with per-agent GraphRAG context
 - [x] Real Social Media Seeding (Google News RSS + Grok X Search)
-- [x] Prediction reports + PDF download
-- [x] Interactive agent chat
-- [x] 3-Tier LLM Cost Reduction (Sonnet/Haiku/Gemini)
-- [x] Grok (xAI) Integration
-- [x] **Prediction Tracking System** — Auto-freeze, background scoring, accuracy dashboard
+- [x] Prediction reports + PDF + interactive chat
+- [x] 3-Tier LLM Cost Reduction + 12-point optimizations
+- [x] Prediction Tracking System (freeze, APScheduler scoring, accuracy dashboard)
 - [x] Cyberpunk dark theme UI
 
-## Graph Chunking (Implemented Feb 2026)
-- `chunk_content()`: Splits text into overlapping chunks (2500 chars, 300 overlap)
-- `chunk_and_extract()`: Multi-pass extraction per chunk, merged via `merge_graph_sources()`
-- `extract_from_social()`: Extracts entities from Twitter/Reddit posts
-- `merge_graph_sources()`: Deduplicates entities by name, preserves highest importance
-- Multi-source pipeline: intel brief + Grok X posts + Reddit → unified graph
-- Live progress updates via MongoDB polling
+## Universal Domain Classifier (16 domains)
+financial, crypto, political, sports, technology, entertainment, geopolitical, business, science, social, legal, macro, real_estate, health, general
 
-## Prediction Tracking System (Implemented Feb 2026)
-- `freeze_prediction()`: After report gen, saves prediction record
-- `score_pending_predictions()`: APScheduler every 30min, scores via yfinance/Grok
-- AccuracyDashboard: Win rate, domain breakdown, calibration, top agents
-- PredictionOutcomeBadge: CORRECT/INCORRECT/pending on report view
-
-## Key API Endpoints
-- POST /api/sessions/{id}/fetch-live
-- POST /api/sessions/{id}/generate-agents
-- POST /api/sessions/{id}/simulate
-- GET /api/sessions/{id}/report/pdf
-- GET /api/predictions/accuracy
-- GET /api/sessions/{id}/prediction-outcome
-- POST /api/predictions/score-now/{id}
+## Speed Optimizations
+- Intel Agent: Haiku (was Sonnet) — 10s vs 30s
+- Graph Agent: Haiku single-pass — 12s vs 60s+ timeouts
+- Agent Generation: Haiku (was Sonnet) — faster persona creation
+- Report Generation: Sonnet (kept for quality)
+- Total pipeline: ~30-35s (was 60-90s)
 
 ## Backlog
 ### P1
@@ -53,15 +42,10 @@ Build **SwarmSim**, a highly advanced Swarm Intelligence Prediction Engine. User
 - Graph zoom/pan controls
 
 ### P2
-- Entity search/filter in knowledge graph
-- Progress percentage during long operations
-- Refactor App.js into separate components
-- Agent memory persistence across sessions
+- Entity search/filter, progress %, App.js refactor, agent memory persistence
 
 ### P3
 - Custom agent creation, simulation templates, shareable links
 
 ## 3rd Party Integrations
-- Emergent Integrations Proxy (EMERGENT_LLM_KEY)
-- xAI Grok grok-4-1-fast (XAI_API_KEY)
-- yfinance, feedparser, APScheduler (no keys)
+- Emergent Proxy (EMERGENT_LLM_KEY), xAI Grok (XAI_API_KEY), yfinance, feedparser, APScheduler

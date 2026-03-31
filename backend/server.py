@@ -124,22 +124,98 @@ PREDICTION_HORIZONS = [
     "Long term (1+ year)"
 ]
 
-# Topic categories for agent customization
-TOPIC_CATEGORIES = {
-    "financial": ["stock", "market", "crypto", "bitcoin", "trading", "investment", "economy", "fed", "interest rate", "inflation"],
-    "political": ["election", "vote", "congress", "senate", "president", "policy", "law", "democrat", "republican", "legislation"],
-    "geopolitical": ["war", "conflict", "military", "treaty", "sanctions", "diplomacy", "nato", "un", "border"],
-    "sports": ["game", "match", "championship", "player", "team", "league", "score", "tournament", "coach"],
-    "tech": ["ai", "startup", "tech", "software", "app", "launch", "product", "innovation", "company"],
-    "social_cultural": ["trend", "viral", "culture", "social", "celebrity", "movement", "protest"]
+# ── UNIVERSAL DOMAIN CLASSIFIER (16 domains) ──────────────────────────────────
+UNIVERSAL_DOMAINS = {
+    "financial": "Stock markets, indices, commodities, forex, ETFs",
+    "crypto": "Bitcoin, Ethereum, altcoins, DeFi, blockchain",
+    "political": "Elections, parties, politicians, government policy",
+    "sports": "Cricket, football, tennis, Olympics, tournaments",
+    "technology": "AI, product launches, startups, Big Tech, software",
+    "entertainment": "Movies, OTT, music, awards, celebrities, box office",
+    "geopolitical": "Wars, conflicts, sanctions, diplomacy, treaties",
+    "business": "M&A, earnings, IPO, startup funding, corporate strategy",
+    "science": "Research, clinical trials, space, climate science",
+    "social": "Viral trends, controversies, cultural shifts, movements",
+    "legal": "Court cases, regulatory decisions, laws, compliance",
+    "macro": "GDP, inflation, central banks, trade policy",
+    "real_estate": "Property markets, housing prices, commercial real estate",
+    "health": "Pandemics, drug approvals, health policy, medical breakthroughs",
+    "general": "Any topic that does not fit the above categories",
 }
 
-def detect_topic_category(topic: str) -> str:
-    """Detect the category of a topic for agent customization"""
+KEYWORD_MAP = {
+    "financial": ["nifty","sensex","stock","share","bse","nse","equity","market cap",
+                  "ipo","mutual fund","etf","futures","options","sebi","earnings",
+                  "revenue","profit","nasdaq","s&p","dow","trading"],
+    "crypto": ["bitcoin","btc","ethereum","eth","crypto","defi","nft","blockchain",
+               "solana","binance","coinbase","altcoin","web3","token"],
+    "political": ["election","vote","party","bjp","congress","tmc","aap","parliament",
+                  "minister","president","governor","policy","bill","referendum","poll",
+                  "candidate","constituency","campaign","democrat","republican"],
+    "sports": ["cricket","football","ipl","test match","world cup","champions league",
+               "tennis","olympics","nba","nfl","formula 1","f1","tournament","league",
+               "match","player","team","coach","stadium","wicket","goal","innings"],
+    "technology": ["ai","gpt","gemini","claude","llm","startup","launch","product",
+                   "apple","google","microsoft","meta","openai","tesla","app","software",
+                   "iphone","android","chip","semiconductor"],
+    "entertainment": ["movie","film","ott","netflix","amazon prime","disney","bollywood",
+                      "hollywood","actor","director","box office","award","oscar","grammy",
+                      "album","song","celebrity","web series","trailer"],
+    "geopolitical": ["war","conflict","military","nato","un","sanctions","treaty","invasion",
+                     "diplomacy","missile","nuclear","ceasefire","alliance",
+                     "iran","russia","china","taiwan","ukraine","israel","palestine"],
+    "business": ["merger","acquisition","deal","funding","series","valuation",
+                 "unicorn","bankruptcy","layoff","ceo","board","quarterly"],
+    "science": ["research","study","paper","trial","vaccine","drug","nasa","space",
+                "climate","discovery","experiment","genome"],
+    "social": ["viral","trend","meme","controversy","cancel","protest","movement",
+               "hashtag","influencer","backlash","outrage","petition"],
+    "legal": ["court","judge","verdict","lawsuit","case","hearing","appeal",
+              "supreme court","high court","ruling","conviction","acquittal"],
+    "macro": ["gdp","inflation","interest rate","fed","rbi","ecb","cpi",
+              "unemployment","trade deficit","recession","growth forecast"],
+    "health": ["covid","pandemic","vaccine","disease","outbreak","fda","drug approval",
+               "hospital","treatment","clinical","health policy"],
+    "real_estate": ["property","housing","real estate","apartment","commercial","reit",
+                    "builder","developer","construction","mortgage"],
+}
+
+
+async def classify_topic(topic: str) -> dict:
+    """Classify any topic into one of 16 universal domains."""
     topic_lower = topic.lower()
-    for category, keywords in TOPIC_CATEGORIES.items():
+
+    for domain, keywords in KEYWORD_MAP.items():
         if any(kw in topic_lower for kw in keywords):
-            return category
+            logger.info(f"[Classify] '{topic[:40]}' -> {domain} (keyword)")
+            return {"domain": domain, "confidence": 0.9, "method": "keyword"}
+
+    # LLM fallback for ambiguous topics
+    try:
+        domains_str = ", ".join(UNIVERSAL_DOMAINS.keys())
+        response = await call_claude_fast(
+            "You classify prediction topics into domains. Return ONLY JSON.",
+            f'Topic: "{topic}"\nDomains: {domains_str}\nReturn: {{"domain":"name","confidence":0.0-1.0}}',
+            max_tokens=60
+        )
+        from services.agents.common import clean_json
+        result = json.loads(clean_json(response))
+        domain = result.get("domain", "general")
+        if domain not in UNIVERSAL_DOMAINS:
+            domain = "general"
+        logger.info(f"[Classify] '{topic[:40]}' -> {domain} (LLM)")
+        return {"domain": domain, "confidence": result.get("confidence", 0.7), "method": "llm"}
+    except Exception as e:
+        logger.error(f"[Classify] LLM failed: {e}")
+        return {"domain": "general", "confidence": 0.5, "method": "fallback"}
+
+
+def detect_topic_category(topic: str) -> str:
+    """Legacy sync wrapper for topic detection."""
+    topic_lower = topic.lower()
+    for domain, keywords in KEYWORD_MAP.items():
+        if any(kw in topic_lower for kw in keywords):
+            return domain
     return "general"
 
 
@@ -714,6 +790,47 @@ async def resolve_ticker(query: str, graph: dict) -> list:
     return unique[:5]
 
 
+
+async def fetch_wikipedia_context(topic: str) -> dict:
+    """Fetch Wikipedia summary for background context. Free, no API key."""
+    try:
+        encoded = urllib.parse.quote(topic.split("?")[0].strip()[:80])
+        url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{encoded}"
+        req = urllib.request.Request(url, headers={"User-Agent": "SwarmSim/1.0"})
+        loop = asyncio.get_running_loop()
+        def _fetch():
+            with urllib.request.urlopen(req, timeout=5) as r:
+                return json.loads(r.read())
+        data = await loop.run_in_executor(None, _fetch)
+        extract = data.get("extract", "")
+        if extract and len(extract) > 50:
+            return {"available": True, "summary": extract[:600]}
+    except Exception:
+        pass
+    return {"available": False}
+
+
+async def fetch_hacker_news(topic: str) -> dict:
+    """Search Hacker News for tech topics. Free, no API key."""
+    try:
+        query = urllib.parse.quote(topic[:60])
+        url = f"https://hn.algolia.com/api/v1/search?query={query}&hitsPerPage=8&tags=story"
+        req = urllib.request.Request(url, headers={"User-Agent": "SwarmSim/1.0"})
+        loop = asyncio.get_running_loop()
+        def _fetch():
+            with urllib.request.urlopen(req, timeout=5) as r:
+                return json.loads(r.read())
+        data = await loop.run_in_executor(None, _fetch)
+        hits = data.get("hits", [])
+        if hits:
+            titles = [h.get("title", "") for h in hits if h.get("title")]
+            return {"available": True, "headlines": titles[:8],
+                    "signal_text": f"HN: {len(titles)} stories | Top: {titles[0][:80]}" if titles else ""}
+    except Exception:
+        pass
+    return {"available": False}
+
+
 async def fetch_stock_data_for_prediction(tickers: list) -> list:
     """Fetch 60d OHLCV + MA5/MA20/RSI/support/resistance per ticker."""
     if not yf:
@@ -1254,15 +1371,25 @@ async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_q
     try:
         await db.sessions.update_one(
             {"id": session_id},
-            {"$set": {"live_progress": "Initializing web search...", "live_progress_step": 0, "live_progress_total": 9}}
+            {"$set": {"live_progress": "Classifying topic domain...", "live_progress_step": 0, "live_progress_total": 9}}
         )
 
-        # Fetch real-time financial data
+        # Classify the topic into a universal domain
+        topic_meta = await classify_topic(topic)
+        domain = topic_meta.get("domain", "general")
+        logger.info(f"[Live] Domain: {domain} ({topic_meta.get('method','?')})")
+
         await db.sessions.update_one(
             {"id": session_id},
-            {"$set": {"live_progress": "Fetching real-time market data...", "live_progress_step": 0}}
+            {"$set": {"domain": domain, "topic_meta": topic_meta}}
         )
-        financial_data = await fetch_financial_data(topic)
+
+        # Fetch real-time financial data (only for financial/crypto/macro)
+        await db.sessions.update_one(
+            {"id": session_id},
+            {"$set": {"live_progress": "Fetching real-time data...", "live_progress_step": 1}}
+        )
+        financial_data = await fetch_financial_data(topic) if domain in ["financial", "crypto", "macro"] else {"has_data": False}
 
         # Fetch news headlines
         await db.sessions.update_one(
@@ -1311,6 +1438,17 @@ async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_q
         # Prepend Grok web intel brief if available (higher quality, more current)
         if grok_web_brief:
             web_context = f"=== GROK REAL-TIME WEB INTELLIGENCE ===\n{grok_web_brief}\n=== END GROK INTEL ===\n\n{web_context}"
+
+        # Add Wikipedia context for background (free, no key)
+        wiki = await fetch_wikipedia_context(topic)
+        if wiki.get("available"):
+            web_context += f"\n\n=== WIKIPEDIA BACKGROUND ===\n{wiki['summary']}\n=== END WIKIPEDIA ==="
+
+        # Add Hacker News for tech topics (free, no key)
+        if domain == "technology":
+            hn = await fetch_hacker_news(topic)
+            if hn.get("available"):
+                web_context += f"\n\n=== HACKER NEWS ===\n{hn.get('signal_text','')}\n=== END HN ==="
 
         financial_context = ""
         if financial_data.get("has_data"):
@@ -1456,6 +1594,7 @@ async def get_live_status(session_id: str):
         result.update({
             "graph": graph,
             "intel_brief": intel_brief,
+            "domain": session.get("domain", "general"),
             "sources_count": len(intel_brief.get("entities", [])) if intel_brief else 0,
             "fetched_at": session.get("fetched_at"),
         })
@@ -2669,7 +2808,7 @@ async def score_single_prediction(record: dict, yf):
     level_error_pct = None
 
     # Market predictions: use yfinance
-    if domain in ["stock_market", "crypto", "macro"] and tickers:
+    if domain in ["financial", "stock_market", "crypto", "macro"] and tickers:
         primary_ticker = tickers[0]
         baseline_price = baseline.get(primary_ticker, 0)
 
@@ -2695,22 +2834,24 @@ async def score_single_prediction(record: dict, yf):
             if predicted_level is not None and predicted_level != 0:
                 level_error_pct = abs(actual_price - predicted_level) / abs(predicted_level) * 100
 
-    # Non-market: use Grok web search
-    elif domain in ["political", "general"]:
+    # Non-market: use Claude-based outcome scoring
+    else:
         topic = record.get("topic", "")
-        if topic and XAI_AVAILABLE and os.environ.get("XAI_API_KEY"):
+        predicted_outcome = record.get("predicted_outcome", "")
+        if topic:
             try:
-                grok_result = await fetch_grok_web_intel(topic, "current outcome")
-                brief = grok_result.get("brief", "")
-                if brief:
-                    pos_words = ["positive", "bullish", "support", "grew", "increased", "won", "passed", "improved"]
-                    neg_words = ["negative", "bearish", "opposition", "fell", "decreased", "lost", "rejected", "worsened"]
-                    pos = sum(1 for w in pos_words if w in brief.lower())
-                    neg = sum(1 for w in neg_words if w in brief.lower())
-                    actual_direction = "UP" if pos > neg else "DOWN" if neg > pos else "FLAT"
-                    direction_correct = (predicted_dir == actual_direction)
+                from services.agents.common import clean_json
+                scoring_response = await call_claude_fast(
+                    "You are an outcome scorer. Determine if a prediction was correct based on current reality.",
+                    f'Prediction topic: {topic}\nPredicted outcome: {predicted_outcome}\nPredicted direction: {predicted_dir}\nDomain: {domain}\n\nBased on your latest knowledge, score this prediction.\nReturn JSON: {{"actual_direction":"UP|DOWN|FLAT","confidence":0.0-1.0,"reasoning":"brief explanation"}}',
+                    max_tokens=150
+                )
+                score_data = json.loads(clean_json(scoring_response))
+                actual_direction = score_data.get("actual_direction", "FLAT")
+                direction_correct = (predicted_dir == actual_direction)
+                logger.info(f"[Scorer] Claude scored {domain}: {predicted_dir}->{actual_direction} ({'CORRECT' if direction_correct else 'WRONG'})")
             except Exception as e:
-                logger.error(f"[Scorer] Grok scoring error: {e}")
+                logger.error(f"[Scorer] Claude scoring error: {e}")
 
     # Composite score: 70% direction, 30% level accuracy
     direction_score = 1.0 if direction_correct else 0.0

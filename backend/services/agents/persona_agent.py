@@ -11,11 +11,21 @@ ALL_TYPES = ["Skeptic", "Optimist", "Insider", "Contrarian", "Expert", "Neutral"
 
 CATEGORY_GUIDANCE = {
     "financial": "Include: financial analysts, retail investors, institutional traders, economists, financial journalists, fintech founders",
+    "crypto": "Include: crypto traders, DeFi developers, blockchain analysts, VCs, crypto journalists, skeptics, regulators",
     "political": "Include: political analysts, voters from different demographics, campaign strategists, journalists, activists, lobbyists",
     "geopolitical": "Include: foreign policy experts, military analysts, diplomats, regional specialists, journalists, affected citizens",
     "sports": "Include: sports analysts, fans, coaches, former players, sports journalists, betting analysts",
+    "technology": "Include: tech analysts, startup founders, engineers, VCs, tech journalists, early adopters, skeptics",
     "tech": "Include: tech analysts, startup founders, engineers, VCs, tech journalists, early adopters, skeptics",
+    "entertainment": "Include: film critics, industry insiders, fans, producers, entertainment journalists, box office analysts",
+    "business": "Include: business analysts, executives, investors, startup founders, management consultants, industry journalists",
+    "science": "Include: research scientists, science journalists, policy experts, pharma analysts, patient advocates",
+    "social": "Include: cultural critics, influencers, activists, everyday people, researchers, sociologists, journalists",
     "social_cultural": "Include: cultural critics, influencers, activists, everyday people, researchers, journalists",
+    "legal": "Include: lawyers, legal analysts, judges, activists, journalists, compliance officers, affected parties",
+    "macro": "Include: macroeconomists, central bank watchers, bond traders, policy analysts, business owners",
+    "health": "Include: doctors, health policy experts, epidemiologists, pharma analysts, patients, nurses, health journalists",
+    "real_estate": "Include: real estate agents, developers, urban planners, property investors, housing policy experts, home buyers",
 }
 
 

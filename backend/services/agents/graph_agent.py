@@ -19,46 +19,30 @@ Return ONLY valid JSON. No markdown. No extra text."""
 
 
 def build_graph_extraction_prompt(content: str, topic: str = "") -> str:
-    """Build a detailed prompt for uncapped entity/relationship extraction."""
-    return f"""Extract a comprehensive knowledge graph from this content.
+    """Build a prompt for entity/relationship extraction optimized for speed."""
+    return f"""Extract a knowledge graph from this content. Return ONLY valid JSON.
 
 Content:
-{content[:4000]}
+{content[:3000]}
 
-{"Topic context: " + topic if topic else ""}
+{"Topic: " + topic if topic else ""}
 
-EXTRACTION RULES:
-- Extract EVERY named entity: people, organizations, countries, companies,
-  policies, laws, metrics, events, concepts, assets, instruments
-- Extract EVERY relationship between them — causal, political, economic,
-  military, financial, social, legal
-- High importance = central to the topic
-- Low importance = mentioned in passing but still relevant
-- Do NOT merge entities — keep distinct even if related
-- Do NOT summarise groups — name each entity individually
-- Minimum extraction targets:
-    Simple article (500 words):  20+ entities,  30+ relationships
-    Standard document (2000w):   40+ entities,  60+ relationships
-    Complex report (5000w+):     80+ entities, 120+ relationships
-    Geopolitical topic:          60+ entities,  90+ relationships
-    Financial/market topic:      50+ entities,  70+ relationships
-- There is NO upper limit on entities or relationships
+RULES:
+- Extract 15-30 key entities (people, organizations, countries, companies, policies, events, concepts, metrics)
+- Extract relationships between them
+- Importance: High = central, Medium = significant, Low = peripheral
 
-Return this exact JSON structure:
+Return JSON:
 {{
-  "summary": "3-4 sentence overview covering the core topic, main tensions, and key stakes",
-  "themes": ["theme1", "theme2", "theme3", "theme4", "theme5", "theme6"],
+  "summary": "2-3 sentence overview",
+  "themes": ["theme1", "theme2", "theme3", "theme4"],
   "entities": [
     {{
-      "id": "unique_snake_case_id",
-      "name": "Full Entity Name",
-      "type": "Person|Organization|Country|Company|Policy|Law|Metric|Event|Concept|Asset|Instrument|Location",
-      "description": "1-2 sentence description specific to this topic",
-      "importance": "High|Medium|Low",
-      "stance": "positive|negative|neutral|contested",
-      "attributes": {{
-        "any_relevant_key": "any_relevant_value"
-      }}
+      "id": "snake_case_id",
+      "name": "Entity Name",
+      "type": "Person|Organization|Country|Company|Policy|Event|Concept|Metric|Asset",
+      "description": "Brief description",
+      "importance": "High|Medium|Low"
     }}
   ],
   "relationships": [
@@ -66,24 +50,17 @@ Return this exact JSON structure:
       "source_id": "entity_id_1",
       "target_id": "entity_id_2",
       "type": "relationship_type",
-      "description": "what this relationship means in context",
-      "strength": "Strong|Medium|Weak",
-      "direction": "unidirectional|bidirectional"
+      "description": "brief description"
     }}
   ],
   "key_tensions": [
     {{
-      "tension": "description of conflict or tension",
-      "entities_involved": ["entity_id_1", "entity_id_2"],
+      "tension": "core conflict",
+      "entities_involved": ["id1", "id2"],
       "stakes": "what is at stake"
     }}
   ],
-  "prediction_hooks": [
-    "specific falsifiable question that the simulation can answer"
-  ],
-  "agent_diversity_hints": [
-    "demographic or professional group that would have a distinct view on this"
-  ]
+  "agent_diversity_hints": ["viewpoint1", "viewpoint2", "viewpoint3"]
 }}"""
 
 
@@ -295,12 +272,12 @@ Suggested diverse viewpoints:
 AGENT GENERATION RULES:
 1. Generate exactly {num_agents} agents.
 2. Each agent must reference specific entities from the graph in their background and initial_stance.
-3. Each agent's initial_stance must take a specific position on a specific tension.
+3. Each agent initial_stance must take a specific position on a specific tension.
 4. Vary occupations based on who would realistically care about this topic.
 5. Include at least one agent per major faction implied by the tensions.
-6. Make initial_stance concrete — reference actual entity names from the graph.
+6. Make initial_stance concrete - reference actual entity names from the graph.
    BAD:  "I think the market will go down"
-   GOOD: "With FII net selling and NIFTY below support, I'm reducing exposure to IT heavyweights like Infosys and TCS"
+   GOOD: "With FII net selling and NIFTY below support, reducing exposure to IT heavyweights like Infosys and TCS"
 """
 
 
@@ -345,25 +322,9 @@ Prediction Question: {prediction_query}"""
     response = await call_claude_fn(
         GRAPH_EXTRACTION_SYSTEM,
         build_graph_extraction_prompt(content, prediction_query),
-        max_tokens=1500
+        max_tokens=1000
     )
     graph = json.loads(clean_json(response))
-
-    # Validate: if too few entities, retry with stronger instruction
-    if len(graph.get("entities", [])) < 10:
-        logger.info(f"Graph agent: only {len(graph.get('entities', []))} entities, retrying for richer extraction")
-        retry_content = content + f"""
-
-IMPORTANT: Your previous attempt only extracted {len(graph.get('entities', []))} entities.
-Extract at LEAST 20 entities. Be more granular — include specific people, sub-organizations,
-individual events, regulatory bodies, market instruments, and abstract forces."""
-
-        response = await call_claude_fn(
-            GRAPH_EXTRACTION_SYSTEM,
-            build_graph_extraction_prompt(retry_content, prediction_query),
-            max_tokens=1500
-        )
-        graph = json.loads(clean_json(response))
 
     # Preserve intel brief metadata
     if not graph.get("summary"):
@@ -382,33 +343,20 @@ async def run_from_document(text: str, prediction_query: str, call_claude_fn,
 
     if image_data:
         system_prompt = GRAPH_EXTRACTION_SYSTEM
-        user_prompt = f"""Analyze this image carefully and extract a comprehensive knowledge graph.
-Prediction Question: {prediction_query}
-
-{build_graph_extraction_prompt("(See image content)", prediction_query)}"""
+        graph_prompt = build_graph_extraction_prompt("(See image content)", prediction_query)
+        user_prompt = f"Analyze this image carefully and extract a knowledge graph.\nPrediction Question: {prediction_query}\n\n{graph_prompt}"
 
         from services.agents.common import clean_json
-        response = await call_claude_fn(system_prompt, user_prompt, max_tokens=1500, image_data=image_data)
+        response = await call_claude_fn(system_prompt, user_prompt, max_tokens=1000, image_data=image_data)
         graph = json.loads(clean_json(response))
     else:
         from services.agents.common import clean_json
         response = await call_claude_fn(
             GRAPH_EXTRACTION_SYSTEM,
             build_graph_extraction_prompt(text, prediction_query),
-            max_tokens=1500
+            max_tokens=1000
         )
         graph = json.loads(clean_json(response))
-
-        # Retry if too few entities
-        if len(graph.get("entities", [])) < 10:
-            logger.info(f"Graph agent (doc): only {len(graph.get('entities', []))} entities, retrying")
-            retry_prompt = build_graph_extraction_prompt(text, prediction_query) + """
-
-IMPORTANT: Extract at LEAST 20 entities. Be more granular — include all named people,
-organizations, events, policies, metrics, and concepts mentioned in the document."""
-
-            response = await call_claude_fn(GRAPH_EXTRACTION_SYSTEM, retry_prompt, max_tokens=1500)
-            graph = json.loads(clean_json(response))
 
     # Post-process: build indices and counts
     graph = process_graph_response(graph)

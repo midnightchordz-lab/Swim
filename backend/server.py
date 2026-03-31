@@ -1293,7 +1293,7 @@ async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_q
             )
             logger.info(f"[Live] Grok Twitter seeded: {len(grok_twitter_result['tweets'])} posts")
 
-        if not web_data.get("results") and not financial_data.get("has_data") and not grok_web_brief:
+        if not web_data.get("results") and not financial_data.get("has_data") and not grok_web_brief and not yahoo_headlines.strip():
             await db.sessions.update_one(
                 {"id": session_id},
                 {"$set": {"live_fetch_status": "failed", "live_fetch_error": "Could not fetch live data. Please try a different topic."}}
@@ -1303,6 +1303,10 @@ async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_q
         # Build contexts for the orchestrator
         context_parts = [f"- {r['title']}: {r['snippet']}" for r in web_data["results"][:20]]
         web_context = "\n".join(context_parts)
+
+        # If web scraping returned nothing, use news headlines as context
+        if not web_context.strip() and yahoo_headlines.strip():
+            web_context = f"=== NEWS HEADLINES ===\n{yahoo_headlines}\n=== END HEADLINES ==="
 
         # Prepend Grok web intel brief if available (higher quality, more current)
         if grok_web_brief:

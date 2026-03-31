@@ -71,17 +71,17 @@ async def run_live_intel_pipeline(session_id: str, topic: str, horizon: str,
     if financial_data and financial_data.get("has_data"):
         intel_brief["verified_market_data"] = financial_data["data"]
 
-    # Step 2: Graph Agent extracts knowledge graph (FLASH — fast structured extraction)
+    # Step 2: Graph Agent extracts knowledge graph (FAST — Haiku for speed within proxy timeout)
     # Skip if caller already has a cached graph
     if not skip_graph:
-        call_flash = call_fns.get("flash", call_premium)
-        logger.info(f"[Orchestrator] Step 2: Graph Agent (flash) for session {session_id}")
+        call_graph = call_fns.get("fast", call_premium)  # Haiku — fastest structured JSON
+        logger.info(f"[Orchestrator] Step 2: Graph Agent (haiku) for session {session_id}")
         await db.sessions.update_one(
             {"id": session_id},
             {"$set": {"live_progress": "Extracting knowledge graph..."}}
         )
 
-        graph = await graph_agent.run(intel_brief, prediction_query, call_flash)
+        graph = await graph_agent.run(intel_brief, prediction_query, call_graph)
         state["graph"] = graph
         state["pipeline_status"] = "graph_ready"
 

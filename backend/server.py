@@ -1216,8 +1216,8 @@ async def upload_document(
     text, image_data = await parse_document(file)
     
     try:
-        # Use Gemini Flash for faster graph extraction (image uploads still use Claude for vision)
-        graph_call_fn = call_claude if image_data else call_gemini_flash
+        # Use Haiku for faster graph extraction (image uploads still use Claude for vision)
+        graph_call_fn = call_claude if image_data else call_claude_fast
         graph = await graph_agent_module.run_from_document(
             text, prediction_query, graph_call_fn, image_data=image_data
         )

@@ -20,10 +20,10 @@ Return ONLY valid JSON. No markdown. No extra text."""
 
 def build_graph_extraction_prompt(content: str, topic: str = "") -> str:
     """Build a detailed prompt for uncapped entity/relationship extraction."""
-    return f"""Extract a comprehensive, complete knowledge graph from this content.
+    return f"""Extract a comprehensive knowledge graph from this content.
 
 Content:
-{content[:8000]}
+{content[:4000]}
 
 {"Topic context: " + topic if topic else ""}
 
@@ -335,17 +335,17 @@ async def run(intel_brief: dict, prediction_query: str, call_claude_fn) -> dict:
     stakeholders = intel_brief.get("stakeholders", [])
 
     content = f"""Intelligence Brief Summary:
-{summary[:5000]}
+{summary[:3000]}
 
 Themes: {', '.join(themes)}
-Key Stakeholders: {json.dumps(stakeholders[:8])}
+Key Stakeholders: {json.dumps(stakeholders[:6])}
 Prediction Question: {prediction_query}"""
 
     from services.agents.common import clean_json
     response = await call_claude_fn(
         GRAPH_EXTRACTION_SYSTEM,
         build_graph_extraction_prompt(content, prediction_query),
-        max_tokens=2500
+        max_tokens=1500
     )
     graph = json.loads(clean_json(response))
 
@@ -361,7 +361,7 @@ individual events, regulatory bodies, market instruments, and abstract forces.""
         response = await call_claude_fn(
             GRAPH_EXTRACTION_SYSTEM,
             build_graph_extraction_prompt(retry_content, prediction_query),
-            max_tokens=2500
+            max_tokens=1500
         )
         graph = json.loads(clean_json(response))
 
@@ -388,14 +388,14 @@ Prediction Question: {prediction_query}
 {build_graph_extraction_prompt("(See image content)", prediction_query)}"""
 
         from services.agents.common import clean_json
-        response = await call_claude_fn(system_prompt, user_prompt, max_tokens=2500, image_data=image_data)
+        response = await call_claude_fn(system_prompt, user_prompt, max_tokens=1500, image_data=image_data)
         graph = json.loads(clean_json(response))
     else:
         from services.agents.common import clean_json
         response = await call_claude_fn(
             GRAPH_EXTRACTION_SYSTEM,
             build_graph_extraction_prompt(text, prediction_query),
-            max_tokens=2500
+            max_tokens=1500
         )
         graph = json.loads(clean_json(response))
 
@@ -407,7 +407,7 @@ Prediction Question: {prediction_query}
 IMPORTANT: Extract at LEAST 20 entities. Be more granular — include all named people,
 organizations, events, policies, metrics, and concepts mentioned in the document."""
 
-            response = await call_claude_fn(GRAPH_EXTRACTION_SYSTEM, retry_prompt, max_tokens=2500)
+            response = await call_claude_fn(GRAPH_EXTRACTION_SYSTEM, retry_prompt, max_tokens=1500)
             graph = json.loads(clean_json(response))
 
     # Post-process: build indices and counts

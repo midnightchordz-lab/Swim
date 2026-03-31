@@ -459,81 +459,38 @@ Core tensions:
 
 async def run(intel_brief: dict, prediction_query: str, call_claude_fn,
               social_posts: list = None, progress_fn=None) -> dict:
-    """Extract a knowledge graph from an intel brief using multi-chunk + multi-source pipeline.
+    """Extract a knowledge graph from an intel brief. Single-pass for speed and memory efficiency."""
+    from services.agents.common import clean_json
 
-    Args:
-        intel_brief: The intelligence brief dict
-        prediction_query: The prediction question
-        call_claude_fn: LLM call function (Haiku recommended for speed)
-        social_posts: Optional list of social media posts for multi-source extraction
-        progress_fn: Optional async callback for progress updates (async fn(msg: str))
-    """
     summary = intel_brief.get("summary", "")
     themes = intel_brief.get("themes", [])
     stakeholders = intel_brief.get("stakeholders", [])
 
-    content = f"Intelligence Brief Summary:\n{summary[:4000]}\n\nThemes: {', '.join(themes)}\nKey Stakeholders: {json.dumps(stakeholders[:6])}\nPrediction Question: {prediction_query}"
-
-    # Decide chunk count based on content length
-    content_len = len(content)
-    max_chunks = 1 if content_len < 1500 else 2 if content_len < 4000 else 3
+    content = f"Intelligence Brief Summary:\n{summary[:3000]}\n\nThemes: {', '.join(themes)}\nKey Stakeholders: {json.dumps(stakeholders[:6])}\nPrediction Question: {prediction_query}"
 
     if progress_fn:
-        await progress_fn(f"Extracting knowledge graph ({max_chunks} chunk{'s' if max_chunks > 1 else ''})...")
+        await progress_fn("Extracting knowledge graph...")
 
-    # Step 1: Multi-chunk extraction from intel brief
-    primary_graph = await chunk_and_extract(content, prediction_query, call_claude_fn, max_chunks=max_chunks)
-    for e in primary_graph.get("entities", []):
+    response = await call_claude_fn(
+        GRAPH_EXTRACTION_SYSTEM,
+        build_graph_extraction_prompt(content, prediction_query),
+        max_tokens=1000
+    )
+    graph = json.loads(clean_json(response))
+
+    for e in graph.get("entities", []):
         if "source" not in e:
             e["source"] = "brief"
 
-    primary_count = len(primary_graph.get("entities", []))
-    if progress_fn:
-        await progress_fn(f"Brief extraction: {primary_count} entities found")
+    if not graph.get("summary"):
+        graph["summary"] = summary
+    if not graph.get("themes"):
+        graph["themes"] = themes
 
-    # Step 2: Extract from social posts (if available)
-    social_graph = {"entities": [], "relationships": []}
-    if social_posts:
-        twitter_posts = [p for p in social_posts if p.get("platform", "").lower() in ("twitter", "x", "grok")]
-        reddit_posts = [p for p in social_posts if p.get("platform", "").lower() == "reddit"]
-        other_posts = [p for p in social_posts if p not in twitter_posts and p not in reddit_posts]
-
-        source_graphs = []
-        if twitter_posts:
-            if progress_fn:
-                await progress_fn(f"Extracting from {len(twitter_posts)} Twitter/X posts...")
-            tw_graph = await extract_from_social(twitter_posts, "twitter", prediction_query, call_claude_fn)
-            source_graphs.append(tw_graph)
-
-        if reddit_posts:
-            if progress_fn:
-                await progress_fn(f"Extracting from {len(reddit_posts)} Reddit posts...")
-            rd_graph = await extract_from_social(reddit_posts, "reddit", prediction_query, call_claude_fn)
-            source_graphs.append(rd_graph)
-
-        if other_posts:
-            other_graph = await extract_from_social(other_posts, "social", prediction_query, call_claude_fn)
-            source_graphs.append(other_graph)
-
-        if source_graphs:
-            social_graph = merge_graph_sources(source_graphs)
-
-    # Step 3: Merge all sources
-    all_sources = [primary_graph, social_graph]
-    merged = merge_graph_sources(all_sources)
-
-    # Preserve metadata from primary graph
-    merged["summary"] = primary_graph.get("summary", summary)
-    merged["themes"] = primary_graph.get("themes", themes)
-    merged["key_tensions"] = primary_graph.get("key_tensions", [])
-    merged["agent_diversity_hints"] = primary_graph.get("agent_diversity_hints", [])
-
-    # Step 4: Post-process
-    graph = process_graph_response(merged)
+    graph = process_graph_response(graph)
 
     if progress_fn:
-        social_count = len(social_graph.get("entities", []))
-        await progress_fn(f"Graph complete: {graph['entity_count']} entities, {graph['relationship_count']} rels" + (f" ({social_count} from social)" if social_count else ""))
+        await progress_fn(f"Graph complete: {graph['entity_count']} entities, {graph['relationship_count']} rels")
 
     logger.info(f"[GraphAgent] Final: {graph['entity_count']} entities, {graph['relationship_count']} rels")
     return graph
@@ -541,20 +498,20 @@ async def run(intel_brief: dict, prediction_query: str, call_claude_fn,
 
 async def run_from_document(text: str, prediction_query: str, call_claude_fn,
                             image_data: dict = None) -> dict:
-    """Extract knowledge graph from uploaded document text or image using chunked extraction."""
+    """Extract knowledge graph from uploaded document text or image."""
+    from services.agents.common import clean_json
 
     if image_data:
-        system_prompt = GRAPH_EXTRACTION_SYSTEM
         graph_prompt = build_graph_extraction_prompt("(See image content)", prediction_query)
-        user_prompt = f"Analyze this image carefully and extract a knowledge graph.\nPrediction Question: {prediction_query}\n\n{graph_prompt}"
-
-        from services.agents.common import clean_json
-        response = await call_claude_fn(system_prompt, user_prompt, max_tokens=1000, image_data=image_data)
-        graph = json.loads(clean_json(response))
+        user_prompt = f"Analyze this image and extract a knowledge graph.\nPrediction Question: {prediction_query}\n\n{graph_prompt}"
+        response = await call_claude_fn(GRAPH_EXTRACTION_SYSTEM, user_prompt, max_tokens=1000, image_data=image_data)
     else:
-        # Use chunked extraction for documents
-        graph = await chunk_and_extract(text, prediction_query, call_claude_fn, max_chunks=3)
+        response = await call_claude_fn(
+            GRAPH_EXTRACTION_SYSTEM,
+            build_graph_extraction_prompt(text[:3000], prediction_query),
+            max_tokens=1000
+        )
 
-    # Post-process: build indices and counts
+    graph = json.loads(clean_json(response))
     graph = process_graph_response(graph)
     return graph

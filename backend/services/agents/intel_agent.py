@@ -11,41 +11,32 @@ async def run(topic: str, horizon: str, prediction_query: str,
               call_claude_fn) -> dict:
     """Generate a structured intelligence brief from gathered data sources."""
 
-    system_prompt = """You are an intelligence analyst creating a brief on a current topic. Based on the web data provided, create a structured intelligence brief of 800-1200 words. 
-CRITICAL: If real-time market data is provided (marked as VERIFIED), you MUST use those exact price figures in your analysis. Do NOT invent or estimate prices — use only the verified data provided.
-Respond ONLY with valid JSON, no markdown fences."""
+    system_prompt = """You are an intelligence analyst. Create a concise structured brief on the topic. If real-time market data is provided (VERIFIED), use those exact figures. Respond ONLY with valid JSON."""
 
     user_prompt = f"""Topic: {topic}
-Prediction Horizon: {horizon}
-Prediction Question: {prediction_query}
+Horizon: {horizon}
+Question: {prediction_query}
 {financial_context}
-Latest headlines for {topic}:
-{yahoo_headlines}
+Headlines:
+{yahoo_headlines[:1500]}
 
-Live Web Data:
-{web_context}
+Web Data:
+{web_context[:2000]}
 
-Using these as your primary source, write a comprehensive 800-word intel brief covering all angles relevant to the prediction horizon: {horizon}
-
-IMPORTANT: If VERIFIED REAL-TIME MARKET DATA is provided above, use those exact prices and figures in your summary and data_points. Do NOT make up different numbers.
-
+Write a focused 300-400 word intel brief.
 Return JSON:
 {{
-  "summary": "Detailed 800-1200 word executive summary synthesizing all findings, covering current state, key developments, stakeholder positions, data trends, and outlook. Use verified market prices if available.",
-  "key_developments": ["development 1", "development 2", "development 3", "development 4", "development 5"],
-  "stakeholders": [
-    {{"name": "Stakeholder Name", "position": "Their current stance or action", "influence": "high|medium|low"}}
-  ],
-  "data_points": [
-    {{"metric": "Key metric or stat", "value": "Current value", "trend": "up|down|stable"}}
-  ],
-  "themes": ["theme1", "theme2", "theme3", "theme4", "theme5"],
-  "uncertainty_factors": ["factor that could change outcomes"],
+  "summary": "300-400 word executive summary with current state, key developments, and outlook",
+  "key_developments": ["dev1", "dev2", "dev3"],
+  "stakeholders": [{{"name": "Name", "position": "stance", "influence": "high|medium|low"}}],
+  "data_points": [{{"metric": "key stat", "value": "value", "trend": "up|down|stable"}}],
+  "themes": ["theme1", "theme2", "theme3"],
+  "uncertainty_factors": ["factor1"],
   "confidence_level": "high|medium|low"
 }}"""
 
     from services.agents.common import clean_json
-    response = await call_claude_fn(system_prompt, user_prompt, max_tokens=800)
+    response = await call_claude_fn(system_prompt, user_prompt, max_tokens=500)
     return json.loads(clean_json(response))
 
 

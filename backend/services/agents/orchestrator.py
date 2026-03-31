@@ -29,7 +29,7 @@ async def run_live_intel_pipeline(session_id: str, topic: str, horizon: str,
 
     state = {"pipeline_status": "intel"}
 
-    # Step 1: Intel Agent generates brief (PREMIUM — deep reasoning)
+    # Step 1: Intel Agent generates brief (FAST — Haiku for speed, sufficient for structured analysis)
     logger.info(f"[Orchestrator] Step 1: Intel Agent for session {session_id}")
     await db.sessions.update_one(
         {"id": session_id},
@@ -39,7 +39,7 @@ async def run_live_intel_pipeline(session_id: str, topic: str, horizon: str,
     intel_brief = await intel_agent.run(
         topic, horizon, prediction_query,
         web_context, yahoo_headlines, financial_context,
-        call_premium
+        call_fast
     )
     state["intel_brief"] = intel_brief
 
@@ -71,11 +71,10 @@ async def run_live_intel_pipeline(session_id: str, topic: str, horizon: str,
     if financial_data and financial_data.get("has_data"):
         intel_brief["verified_market_data"] = financial_data["data"]
 
-    # Step 2: Graph Agent extracts knowledge graph with multi-chunk + multi-source
-    # Skip if caller already has a cached graph
+    # Step 2: Graph Agent — single-pass extraction (Haiku for speed)
     if not skip_graph:
-        call_graph = call_fns.get("fast", call_premium)  # Haiku for speed
-        logger.info(f"[Orchestrator] Step 2: Graph Agent (chunked) for session {session_id}")
+        call_graph = call_fns.get("fast", call_premium)
+        logger.info(f"[Orchestrator] Step 2: Graph Agent for session {session_id}")
 
         async def progress_fn(msg):
             await db.sessions.update_one(
@@ -83,19 +82,8 @@ async def run_live_intel_pipeline(session_id: str, topic: str, horizon: str,
                 {"$set": {"live_progress": msg}}
             )
 
-        # Gather social posts from session for multi-source extraction
-        session_data = await db.sessions.find_one({"id": session_id}, {"_id": 0, "grok_posts": 1, "social_seed": 1})
-        social_posts = []
-        if session_data:
-            grok_posts = session_data.get("grok_posts", [])
-            for p in grok_posts:
-                p["platform"] = "twitter"
-            social_posts.extend(grok_posts)
-            social_posts.extend(session_data.get("social_seed", []))
-
         graph = await graph_agent.run(
             intel_brief, prediction_query, call_graph,
-            social_posts=social_posts if social_posts else None,
             progress_fn=progress_fn
         )
         state["graph"] = graph
@@ -149,11 +137,11 @@ async def run_agent_generation_pipeline(session_id: str, num_agents: int,
     if social_context:
         intel_context += social_context
 
-    # Step 3: Persona Agent generates agents (PREMIUM — creative persona generation)
+    # Step 3: Persona Agent generates agents (FAST — Haiku for speed)
     logger.info(f"[Orchestrator] Step 3: Persona Agent ({num_agents} agents)")
     agents = await persona_agent.run(
         graph, query, num_agents, topic_category, data_mode, intel_context,
-        call_premium
+        call_fast
     )
 
     # Step 3b: Critic scores diversity (pure Python — no LLM)

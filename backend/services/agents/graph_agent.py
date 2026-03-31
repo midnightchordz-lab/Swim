@@ -1,10 +1,13 @@
 """Graph Agent - Knowledge graph extraction with GraphRAG Level 1 + Level 2 capabilities.
 
-Level 1: Enhanced entity & relationship extraction (uncapped, with importance, tensions, hooks)
+Level 1: Enhanced entity & relationship extraction with importance, tensions, hooks
 Level 2: Per-agent GraphRAG retrieval for grounded simulation posts
+Level 3: Multi-chunk extraction + multi-source merge (brief + Twitter + Reddit)
 """
 import json
 import logging
+import asyncio
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +139,156 @@ def ensure_indices(graph: dict) -> dict:
     if "entity_index" not in graph or "adjacency_map" not in graph:
         graph = process_graph_response(graph)
     return graph
+
+
+# ─── CHUNKING & MULTI-SOURCE MERGE ──────────────────────────────────────────────
+
+def chunk_content(text: str, chunk_size: int = 2500, overlap: int = 300) -> list:
+    """Split content into overlapping chunks for multi-pass graph extraction.
+    Overlap ensures entities at chunk boundaries are captured with context."""
+    if len(text) <= chunk_size:
+        return [text]
+
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = min(start + chunk_size, len(text))
+        if end < len(text):
+            last_period = text.rfind('.', start, end)
+            if last_period > start + chunk_size // 2:
+                end = last_period + 1
+        chunks.append(text[start:end].strip())
+        start = end - overlap
+        if start >= len(text):
+            break
+
+    return [c for c in chunks if len(c) > 100]
+
+
+def merge_graph_sources(graphs: list) -> dict:
+    """Merge multiple partial graphs into one unified graph, deduplicating entities by name."""
+    all_entities = []
+    all_relationships = []
+    seen_entity_names = {}
+
+    for g in graphs:
+        for entity in g.get("entities", []):
+            name_key = entity.get("name", "").lower().strip()
+            if not name_key:
+                continue
+            if name_key in seen_entity_names:
+                existing = seen_entity_names[name_key]
+                imp_rank = {"High": 0, "Medium": 1, "Low": 2}
+                if imp_rank.get(entity.get("importance"), 2) < imp_rank.get(existing.get("importance"), 2):
+                    existing["importance"] = entity["importance"]
+                if entity.get("source") and entity["source"] != existing.get("source"):
+                    existing["source"] = existing.get("source", "") + "+" + entity["source"]
+            else:
+                seen_entity_names[name_key] = entity
+                all_entities.append(entity)
+
+        for rel in g.get("relationships", []):
+            all_relationships.append(rel)
+
+    valid_ids = {e.get("id") for e in all_entities}
+    deduped_rels = []
+    seen_rel_keys = set()
+    for rel in all_relationships:
+        src = rel.get("source_id", rel.get("source", ""))
+        tgt = rel.get("target_id", rel.get("target", ""))
+        if src in valid_ids and tgt in valid_ids:
+            rel_key = f"{src}_{tgt}_{rel.get('type', '')}"
+            if rel_key not in seen_rel_keys:
+                seen_rel_keys.add(rel_key)
+                deduped_rels.append(rel)
+
+    return {"entities": all_entities, "relationships": deduped_rels}
+
+
+async def chunk_and_extract(content: str, topic: str, call_fn, max_chunks: int = 3) -> dict:
+    """Multi-chunk graph extraction. Splits content, extracts per chunk, merges.
+    Each chunk gets full LLM attention for richer extraction than single-pass."""
+    from services.agents.common import clean_json
+
+    chunks = chunk_content(content, chunk_size=2500, overlap=300)
+    chunks = chunks[:max_chunks]
+
+    if len(chunks) <= 1:
+        response = await call_fn(
+            GRAPH_EXTRACTION_SYSTEM,
+            build_graph_extraction_prompt(content, topic),
+            max_tokens=1000
+        )
+        return json.loads(clean_json(response))
+
+    logger.info(f"[ChunkExtract] {len(chunks)} chunks for topic: {topic[:40]}")
+    partial_graphs = []
+
+    for i, chunk in enumerate(chunks):
+        chunk_label = f"chunk {i+1}/{len(chunks)}"
+        try:
+            prompt = build_graph_extraction_prompt(chunk, topic)
+            response = await call_fn(
+                GRAPH_EXTRACTION_SYSTEM,
+                f"This is {chunk_label} of a larger document about: {topic}\n\n{prompt}",
+                max_tokens=1000
+            )
+            partial = json.loads(clean_json(response))
+            for e in partial.get("entities", []):
+                e["chunk"] = i
+            partial_graphs.append(partial)
+            logger.info(f"[ChunkExtract] {chunk_label}: {len(partial.get('entities', []))} entities")
+        except Exception as e:
+            logger.error(f"[ChunkExtract] {chunk_label} failed: {e}")
+        await asyncio.sleep(0.2)
+
+    if not partial_graphs:
+        logger.warning("[ChunkExtract] All chunks failed, single-pass fallback")
+        response = await call_fn(
+            GRAPH_EXTRACTION_SYSTEM,
+            build_graph_extraction_prompt(content[:2000], topic),
+            max_tokens=1000
+        )
+        return json.loads(clean_json(response))
+
+    merged = merge_graph_sources(partial_graphs)
+    if partial_graphs:
+        merged["summary"] = partial_graphs[0].get("summary", "")
+        merged["themes"] = partial_graphs[0].get("themes", [])
+        merged["key_tensions"] = partial_graphs[0].get("key_tensions", [])
+        merged["agent_diversity_hints"] = partial_graphs[0].get("agent_diversity_hints", [])
+
+    logger.info(f"[ChunkExtract] Merged: {len(merged['entities'])} entities, {len(merged['relationships'])} rels from {len(partial_graphs)} chunks")
+    return merged
+
+
+async def extract_from_social(posts: list, source_label: str, topic: str, call_fn) -> dict:
+    """Extract entities from social media posts (Twitter/Reddit)."""
+    from services.agents.common import clean_json
+
+    if not posts:
+        return {"entities": [], "relationships": []}
+
+    text = "\n".join([
+        f"{p.get('author', 'user')}: {p.get('content', p.get('text', ''))}"
+        for p in posts[:20]
+    ])[:2500]
+
+    try:
+        response = await call_fn(
+            GRAPH_EXTRACTION_SYSTEM,
+            f"Extract entities and relationships from these {source_label} posts about: {topic}\n\n{text}\n\nReturn JSON with entities and relationships arrays only.",
+            max_tokens=800
+        )
+        graph = json.loads(clean_json(response))
+        for e in graph.get("entities", []):
+            e["source"] = source_label
+        logger.info(f"[SocialExtract] {source_label}: {len(graph.get('entities', []))} entities")
+        return graph
+    except Exception as e:
+        logger.error(f"[SocialExtract] {source_label} failed: {e}")
+        return {"entities": [], "relationships": []}
+
 
 
 # ─── LEVEL 2: PER-AGENT GRAPHRAG RETRIEVAL ──────────────────────────────────────
@@ -304,42 +457,91 @@ Core tensions:
 
 # ─── MAIN EXTRACTION FUNCTIONS ──────────────────────────────────────────────────
 
-async def run(intel_brief: dict, prediction_query: str, call_claude_fn) -> dict:
-    """Extract a knowledge graph from an intel brief using enhanced L1 prompts."""
+async def run(intel_brief: dict, prediction_query: str, call_claude_fn,
+              social_posts: list = None, progress_fn=None) -> dict:
+    """Extract a knowledge graph from an intel brief using multi-chunk + multi-source pipeline.
 
+    Args:
+        intel_brief: The intelligence brief dict
+        prediction_query: The prediction question
+        call_claude_fn: LLM call function (Haiku recommended for speed)
+        social_posts: Optional list of social media posts for multi-source extraction
+        progress_fn: Optional async callback for progress updates (async fn(msg: str))
+    """
     summary = intel_brief.get("summary", "")
     themes = intel_brief.get("themes", [])
     stakeholders = intel_brief.get("stakeholders", [])
 
-    content = f"""Intelligence Brief Summary:
-{summary[:3000]}
+    content = f"Intelligence Brief Summary:\n{summary[:4000]}\n\nThemes: {', '.join(themes)}\nKey Stakeholders: {json.dumps(stakeholders[:6])}\nPrediction Question: {prediction_query}"
 
-Themes: {', '.join(themes)}
-Key Stakeholders: {json.dumps(stakeholders[:6])}
-Prediction Question: {prediction_query}"""
+    # Decide chunk count based on content length
+    content_len = len(content)
+    max_chunks = 1 if content_len < 1500 else 2 if content_len < 4000 else 3
 
-    from services.agents.common import clean_json
-    response = await call_claude_fn(
-        GRAPH_EXTRACTION_SYSTEM,
-        build_graph_extraction_prompt(content, prediction_query),
-        max_tokens=1000
-    )
-    graph = json.loads(clean_json(response))
+    if progress_fn:
+        await progress_fn(f"Extracting knowledge graph ({max_chunks} chunk{'s' if max_chunks > 1 else ''})...")
 
-    # Preserve intel brief metadata
-    if not graph.get("summary"):
-        graph["summary"] = summary
-    if not graph.get("themes"):
-        graph["themes"] = themes
+    # Step 1: Multi-chunk extraction from intel brief
+    primary_graph = await chunk_and_extract(content, prediction_query, call_claude_fn, max_chunks=max_chunks)
+    for e in primary_graph.get("entities", []):
+        if "source" not in e:
+            e["source"] = "brief"
 
-    # Post-process: build indices and counts
-    graph = process_graph_response(graph)
+    primary_count = len(primary_graph.get("entities", []))
+    if progress_fn:
+        await progress_fn(f"Brief extraction: {primary_count} entities found")
+
+    # Step 2: Extract from social posts (if available)
+    social_graph = {"entities": [], "relationships": []}
+    if social_posts:
+        twitter_posts = [p for p in social_posts if p.get("platform", "").lower() in ("twitter", "x", "grok")]
+        reddit_posts = [p for p in social_posts if p.get("platform", "").lower() == "reddit"]
+        other_posts = [p for p in social_posts if p not in twitter_posts and p not in reddit_posts]
+
+        source_graphs = []
+        if twitter_posts:
+            if progress_fn:
+                await progress_fn(f"Extracting from {len(twitter_posts)} Twitter/X posts...")
+            tw_graph = await extract_from_social(twitter_posts, "twitter", prediction_query, call_claude_fn)
+            source_graphs.append(tw_graph)
+
+        if reddit_posts:
+            if progress_fn:
+                await progress_fn(f"Extracting from {len(reddit_posts)} Reddit posts...")
+            rd_graph = await extract_from_social(reddit_posts, "reddit", prediction_query, call_claude_fn)
+            source_graphs.append(rd_graph)
+
+        if other_posts:
+            other_graph = await extract_from_social(other_posts, "social", prediction_query, call_claude_fn)
+            source_graphs.append(other_graph)
+
+        if source_graphs:
+            social_graph = merge_graph_sources(source_graphs)
+
+    # Step 3: Merge all sources
+    all_sources = [primary_graph, social_graph]
+    merged = merge_graph_sources(all_sources)
+
+    # Preserve metadata from primary graph
+    merged["summary"] = primary_graph.get("summary", summary)
+    merged["themes"] = primary_graph.get("themes", themes)
+    merged["key_tensions"] = primary_graph.get("key_tensions", [])
+    merged["agent_diversity_hints"] = primary_graph.get("agent_diversity_hints", [])
+
+    # Step 4: Post-process
+    graph = process_graph_response(merged)
+
+    if progress_fn:
+        social_count = len(social_graph.get("entities", []))
+        await progress_fn(f"Graph complete: {graph['entity_count']} entities, {graph['relationship_count']} rels" + (f" ({social_count} from social)" if social_count else ""))
+
+    logger.info(f"[GraphAgent] Final: {graph['entity_count']} entities, {graph['relationship_count']} rels")
     return graph
 
 
 async def run_from_document(text: str, prediction_query: str, call_claude_fn,
                             image_data: dict = None) -> dict:
-    """Extract knowledge graph from uploaded document text or image using enhanced L1 prompts."""
+    """Extract knowledge graph from uploaded document text or image using chunked extraction."""
 
     if image_data:
         system_prompt = GRAPH_EXTRACTION_SYSTEM
@@ -350,13 +552,8 @@ async def run_from_document(text: str, prediction_query: str, call_claude_fn,
         response = await call_claude_fn(system_prompt, user_prompt, max_tokens=1000, image_data=image_data)
         graph = json.loads(clean_json(response))
     else:
-        from services.agents.common import clean_json
-        response = await call_claude_fn(
-            GRAPH_EXTRACTION_SYSTEM,
-            build_graph_extraction_prompt(text, prediction_query),
-            max_tokens=1000
-        )
-        graph = json.loads(clean_json(response))
+        # Use chunked extraction for documents
+        graph = await chunk_and_extract(text, prediction_query, call_claude_fn, max_chunks=3)
 
     # Post-process: build indices and counts
     graph = process_graph_response(graph)

@@ -772,12 +772,17 @@ const UploadStep = ({ sessionId, onComplete }) => {
             {/* Entity Type Breakdown */}
             {graph.entities?.length > 0 && (() => {
               const typeCounts = {};
+              const sourceCounts = {};
               graph.entities.forEach(e => {
                 const t = e.type || 'Unknown';
                 typeCounts[t] = (typeCounts[t] || 0) + 1;
+                const s = (e.source || 'brief').split('+')[0];
+                sourceCounts[s] = (sourceCounts[s] || 0) + 1;
               });
               const sorted = Object.entries(typeCounts).sort((a,b) => b[1] - a[1]).slice(0, 6);
+              const sourceColors = {brief:'var(--cyan)',twitter:'#a855f7',reddit:'#f97316',social:'#3b82f6'};
               return (
+                <>
                 <div className="flex flex-wrap gap-1.5 mt-3">
                   {sorted.map(([type, count]) => (
                     <span key={type} className="px-2 py-0.5 text-[10px] rounded-full flex items-center gap-1" style={{background:'var(--bg3)',border:'1px solid var(--border)',color:'var(--text2)'}}>
@@ -786,6 +791,16 @@ const UploadStep = ({ sessionId, onComplete }) => {
                     </span>
                   ))}
                 </div>
+                {Object.keys(sourceCounts).length > 1 && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {Object.entries(sourceCounts).map(([src, count]) => (
+                      <span key={src} className="px-2 py-0.5 text-[10px] rounded-full flex items-center gap-1" style={{background:'var(--bg3)',border:'1px solid var(--border)',color:sourceColors[src] || 'var(--text2)'}}>
+                        {src}: {count}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                </>
               );
             })()}
           </div>

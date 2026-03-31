@@ -71,21 +71,37 @@ async def run_live_intel_pipeline(session_id: str, topic: str, horizon: str,
     if financial_data and financial_data.get("has_data"):
         intel_brief["verified_market_data"] = financial_data["data"]
 
-    # Step 2: Graph Agent extracts knowledge graph (FAST — Haiku for speed within proxy timeout)
+    # Step 2: Graph Agent extracts knowledge graph with multi-chunk + multi-source
     # Skip if caller already has a cached graph
     if not skip_graph:
-        call_graph = call_fns.get("fast", call_premium)  # Haiku — fastest structured JSON
-        logger.info(f"[Orchestrator] Step 2: Graph Agent (haiku) for session {session_id}")
-        await db.sessions.update_one(
-            {"id": session_id},
-            {"$set": {"live_progress": "Extracting knowledge graph..."}}
-        )
+        call_graph = call_fns.get("fast", call_premium)  # Haiku for speed
+        logger.info(f"[Orchestrator] Step 2: Graph Agent (chunked) for session {session_id}")
 
-        graph = await graph_agent.run(intel_brief, prediction_query, call_graph)
+        async def progress_fn(msg):
+            await db.sessions.update_one(
+                {"id": session_id},
+                {"$set": {"live_progress": msg}}
+            )
+
+        # Gather social posts from session for multi-source extraction
+        session_data = await db.sessions.find_one({"id": session_id}, {"_id": 0, "grok_posts": 1, "social_seed": 1})
+        social_posts = []
+        if session_data:
+            grok_posts = session_data.get("grok_posts", [])
+            for p in grok_posts:
+                p["platform"] = "twitter"
+            social_posts.extend(grok_posts)
+            social_posts.extend(session_data.get("social_seed", []))
+
+        graph = await graph_agent.run(
+            intel_brief, prediction_query, call_graph,
+            social_posts=social_posts if social_posts else None,
+            progress_fn=progress_fn
+        )
         state["graph"] = graph
         state["pipeline_status"] = "graph_ready"
 
-        # Store graph stats (entity_count, relationship_count) for API responses
+        # Store graph stats
         await db.sessions.update_one(
             {"id": session_id},
             {"$set": {

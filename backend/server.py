@@ -144,12 +144,20 @@ UNIVERSAL_DOMAINS = {
 }
 
 KEYWORD_MAP = {
-    "financial": ["nifty","nifty50","nifty 50","sensex","^nsei","^bsesn",
-                  "banknifty","bank nifty","midcap","smallcap","nse index",
-                  "bse index","dalal street",
-                  "stock","share","bse","nse","equity","market cap",
-                  "ipo","mutual fund","etf","futures","options","sebi","earnings",
-                  "revenue","profit","nasdaq","s&p","dow","trading"],
+    "financial": ["nifty","nifty50","nifty 50","nifty50","^nsei",
+                  "sensex","^bsesn","bsesn",
+                  "banknifty","bank nifty","niftybank",
+                  "nifty midcap","nifty smallcap",
+                  "nifty it","nifty pharma","nifty auto",
+                  "midcap","smallcap","nse index","bse index","dalal street",
+                  "reliance","tcs","infosys","hdfc","icici","sbi","wipro",
+                  "itc","bajaj","adani","kotak","axis bank",
+                  "sp500","s&p 500","s&p500","dow jones","nasdaq",
+                  "apple stock","microsoft stock","tesla stock","nvidia stock",
+                  "stock","share price","share","bse","nse","equity","market cap","market",
+                  "index","ipo","mutual fund","etf","futures","options",
+                  "sebi","rbi rate","repo rate","fed rate",
+                  "earnings","revenue","profit","quarterly results","trading"],
     "crypto": ["bitcoin","btc","ethereum","eth","crypto","defi","nft","blockchain",
                "solana","binance","coinbase","altcoin","web3","token"],
     "political": ["election","vote","party","bjp","congress","tmc","aap","parliament",
@@ -182,6 +190,22 @@ KEYWORD_MAP = {
     "real_estate": ["property","housing","real estate","apartment","commercial","reit",
                     "builder","developer","construction","mortgage"],
 }
+
+
+def build_prediction_question(user_question: str, topic: str, horizon: str) -> str:
+    """Use user's question if provided. Only auto-generate if blank."""
+    if user_question and len(user_question.strip()) > 10:
+        return user_question.strip()
+
+    t = topic.lower()
+    if any(w in t for w in ["nifty","sensex","stock","price","btc","bitcoin","crypto","share"]):
+        return f"Where is {topic} headed in the {horizon}?"
+    elif any(w in t for w in ["election","vote","win","party","bjp","congress"]):
+        return f"What will the outcome of the {topic} be?"
+    elif any(w in t for w in ["match","cricket","ipl","final","tournament","cup"]):
+        return f"What will happen in {topic}?"
+    else:
+        return f"What will happen with {topic} in the {horizon}?"
 
 
 async def classify_topic(topic: str) -> dict:
@@ -1556,7 +1580,7 @@ async def fetch_live_data(session_id: str, request: FetchLiveRequest):
     if not topic:
         raise HTTPException(status_code=400, detail="Topic cannot be empty")
     horizon = request.horizon
-    prediction_query = request.prediction_query or f"What will happen with {topic} in the {horizon.lower()}?"
+    prediction_query = build_prediction_question(request.prediction_query, topic, horizon.lower())
     
     # Mark as fetching
     await db.sessions.update_one(
@@ -2609,6 +2633,10 @@ Return JSON with ONLY these fields:
     if stock_data:
         report["stock_data"] = stock_data
 
+    # Inject domain from session into report (LLM output doesn't include it)
+    if not report.get("domain"):
+        report["domain"] = session.get("domain", "general")
+
     # Add real vs simulated sentiment comparison if social seed exists
     real_sentiment = session.get("social_seed_sentiment")
     if real_sentiment and real_sentiment.get("total_comments_analysed", 0) > 0:
@@ -2902,11 +2930,20 @@ async def freeze_prediction(session_id: str, report: dict, session: dict):
         confidence   = pred.get("confidence_score", 0.5)
         timeframe    = pred.get("timeframe", "24 hours")
         domain       = report.get("domain", session.get("domain", "general"))
-        topic        = session.get("prediction_query", "")
+        # Use raw topic, not the wrapped prediction_query template
+        topic        = session.get("topic", "") or session.get("prediction_query", "")
         stock_data   = report.get("stock_data", [])
         tickers      = [s["ticker"] for s in stock_data if s.get("ticker")]
 
         pred_type = DOMAIN_PREDICTION_TYPE.get(domain, "OUTCOME")
+
+        # Override: if tickers found, always use DIRECTIONAL
+        if tickers and pred_type != "DIRECTIONAL":
+            logger.info(
+                f"[Track] Overriding pred_type {pred_type} -> DIRECTIONAL "
+                f"because tickers found: {tickers}"
+            )
+            pred_type = "DIRECTIONAL"
 
         # Determine horizon in hours
         horizon_map = {

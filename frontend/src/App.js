@@ -571,7 +571,7 @@ const UploadStep = ({ sessionId, onComplete }) => {
       await axios.post(`${API}/sessions/${sessionId}/fetch-live`, {
         topic: topic,
         horizon: horizon,
-        prediction_query: query || `What will happen with ${topic} in the ${horizon.toLowerCase()}?`
+        prediction_query: query || ''
       }, { timeout: 15000 });
       
       // Poll for status with progress updates

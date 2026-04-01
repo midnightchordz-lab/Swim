@@ -1,0 +1,119 @@
+{
+  "summary": "Completed bug fix verification for SwarmSim iteration 15. All 30 backend tests passed (100%). Frontend getTypeLabels function verified working correctly. Three bug fixes confirmed working: (1) build_prediction_question returns user's question as-is if >10 chars, auto-generates domain-appropriate questions otherwise; (2) KEYWORD_MAP includes nifty 50, sensex, banknifty, sp500 etc. and classify_topic correctly classifies topics; (3) PREDICTION_TYPE_LABELS uses YES/NO for OUTCOME, POSITIVE/NEGATIVE for SENTIMENT, UP/DOWN for DIRECTIONAL.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/predictions/accuracy", "issue": "Legacy predictions in database have incorrect domain='general' and use UP/DOWN labels for OUTCOME type - these were created before bug fixes. New predictions will have correct values."}
+    ]
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "passed_tests": [
+    "build_prediction_question returns user's question as-is when > 10 chars",
+    "build_prediction_question trims whitespace from user's question",
+    "build_prediction_question auto-generates for blank question",
+    "build_prediction_question auto-generates for short question (< 10 chars)",
+    "build_prediction_question uses 'headed' template for financial topics",
+    "build_prediction_question uses 'outcome' template for election topics",
+    "build_prediction_question uses 'happen' template for sports topics",
+    "KEYWORD_MAP financial includes 'nifty 50'",
+    "KEYWORD_MAP financial includes 'nifty'",
+    "KEYWORD_MAP financial includes 'sensex'",
+    "KEYWORD_MAP financial includes 'banknifty'",
+    "KEYWORD_MAP financial includes 'sp500' or 's&p 500'",
+    "classify_topic('nifty 50') returns domain='financial'",
+    "classify_topic('Bengal election') returns domain='political'",
+    "classify_topic('IPL 2026') returns domain='sports'",
+    "classify_topic('sensex') returns domain='financial'",
+    "classify_topic('btc') returns domain='crypto'",
+    "DOMAIN_PREDICTION_TYPE maps financial to DIRECTIONAL",
+    "DOMAIN_PREDICTION_TYPE maps political to OUTCOME",
+    "DOMAIN_PREDICTION_TYPE maps sports to OUTCOME",
+    "DOMAIN_PREDICTION_TYPE maps crypto to DIRECTIONAL",
+    "PREDICTION_TYPE_LABELS DIRECTIONAL uses UP/DOWN/FLAT",
+    "PREDICTION_TYPE_LABELS OUTCOME uses YES/NO/PARTIAL (not UP/DOWN)",
+    "PREDICTION_TYPE_LABELS SENTIMENT uses POSITIVE/NEGATIVE/MIXED",
+    "GET /api/health returns ok status",
+    "GET /api/predictions/accuracy returns type_breakdown field",
+    "GET /api/predictions/accuracy returns domain_breakdown field",
+    "Session e72fbced with topic='nifty 50' has domain='financial'",
+    "freeze_prediction OUTCOME type uses YES/NO direction",
+    "freeze_prediction SENTIMENT type uses POSITIVE/NEGATIVE/MIXED direction",
+    "Frontend getTypeLabels DIRECTIONAL returns UP/DOWN/FLAT labels",
+    "Frontend getTypeLabels OUTCOME returns YES/NO/PARTIAL labels",
+    "Frontend getTypeLabels SENTIMENT returns POSITIVE/NEGATIVE/MIXED labels"
+  ],
+
+  "failed_tests": [],
+
+  "test_report_links": [
+    "/app/backend/tests/test_bug_fixes_iteration15.py",
+    "/app/test_reports/pytest/pytest_bug_fixes_iteration15.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "Bug 1 VERIFIED: build_prediction_question() at line 195 correctly returns user's question if > 10 chars, otherwise auto-generates domain-appropriate question",
+    "Bug 2 VERIFIED: KEYWORD_MAP at line 146 includes 'nifty 50', 'sensex', 'banknifty', 'sp500', 's&p 500' in financial keywords",
+    "Bug 2 VERIFIED: classify_topic() at line 211 correctly classifies 'nifty 50' as financial domain via keyword matching",
+    "Bug 2 VERIFIED: freeze_prediction at line 2940-2946 overrides pred_type to DIRECTIONAL when tickers are found",
+    "Bug 3 VERIFIED: PREDICTION_TYPE_LABELS at line 2718 uses YES/NO for OUTCOME, POSITIVE/NEGATIVE for SENTIMENT",
+    "Bug 3 VERIFIED: freeze_prediction at lines 2985-3016 extracts type-appropriate direction labels",
+    "Bug 3 VERIFIED: Frontend getTypeLabels at line 2587 correctly maps prediction types to display labels",
+    "Note: Legacy predictions in database still have incorrect values (domain='general', UP/DOWN for OUTCOME) - these were created before bug fixes"
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_bug_fixes_iteration15.py"
+  ],
+
+  "success_rate": {
+    "backend": "100% (30/30 tests passed)",
+    "frontend": "100% (getTypeLabels function verified)"
+  },
+
+  "test_credentials": "No auth required",
+
+  "seed_data_creation": "Used existing session e72fbced-aaff-4e0f-b992-ae2397bbaadc with topic='nifty 50'",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Bug fixes iteration 15 verified. Three bugs fixed: (1) build_prediction_question respects user input > 10 chars; (2) KEYWORD_MAP includes nifty 50, sensex, banknifty, sp500 and classify_topic works correctly; (3) PREDICTION_TYPE_LABELS uses type-appropriate labels (YES/NO for OUTCOME, POSITIVE/NEGATIVE for SENTIMENT, UP/DOWN for DIRECTIONAL). Legacy predictions in database still have old incorrect values but new predictions will be correct. Session e72fbced has domain='financial' and is in graph_ready status.",
+
+  "rca_of_the_issue": {
+    "bug_1_root_cause": "build_prediction_question was always wrapping user input in template 'What will happen with X in Y?' regardless of whether user provided a specific question",
+    "bug_1_fix": "Added check: if user_question and len(user_question.strip()) > 10, return user's question as-is",
+    "bug_2_root_cause": "KEYWORD_MAP financial keywords did not include 'nifty 50' (with space), only 'nifty' and 'nifty50'",
+    "bug_2_fix": "Added 'nifty 50' to financial keywords list, also added ticker-based DIRECTIONAL override in freeze_prediction",
+    "bug_3_root_cause": "freeze_prediction was using UP/DOWN labels for all prediction types instead of type-appropriate labels",
+    "bug_3_fix": "PREDICTION_TYPE_LABELS constant defines type-specific labels, freeze_prediction extracts direction based on pred_type",
+    "verification": "All fixes verified via pytest backend tests and Playwright frontend tests",
+    "status": "ALL 3 BUGS VERIFIED FIXED"
+  },
+
+  "features_verified": {
+    "build_prediction_question_user_input": "VERIFIED - Returns user's question as-is if > 10 chars",
+    "build_prediction_question_auto_generate": "VERIFIED - Auto-generates domain-appropriate question if blank/short",
+    "KEYWORD_MAP_financial_keywords": "VERIFIED - Includes nifty 50, sensex, banknifty, sp500, s&p 500",
+    "classify_topic_nifty_50": "VERIFIED - Returns domain='financial'",
+    "classify_topic_bengal_election": "VERIFIED - Returns domain='political'",
+    "classify_topic_ipl_2026": "VERIFIED - Returns domain='sports'",
+    "DOMAIN_PREDICTION_TYPE_mapping": "VERIFIED - financial->DIRECTIONAL, political->OUTCOME, sports->OUTCOME",
+    "PREDICTION_TYPE_LABELS_OUTCOME": "VERIFIED - Uses YES/NO/PARTIAL (not UP/DOWN)",
+    "PREDICTION_TYPE_LABELS_SENTIMENT": "VERIFIED - Uses POSITIVE/NEGATIVE/MIXED",
+    "PREDICTION_TYPE_LABELS_DIRECTIONAL": "VERIFIED - Uses UP/DOWN/FLAT",
+    "freeze_prediction_ticker_override": "VERIFIED - Overrides to DIRECTIONAL when tickers found",
+    "freeze_prediction_type_aware_labels": "VERIFIED - Extracts direction based on pred_type",
+    "frontend_getTypeLabels": "VERIFIED - Correctly maps prediction types to display labels",
+    "session_domain_field": "VERIFIED - Session e72fbced has domain='financial'"
+  }
+}

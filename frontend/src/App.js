@@ -2584,6 +2584,15 @@ const AccuracyDashboard = ({ data, onClose }) => {
   const getWrColor = (rate) => rate >= 65 ? 'var(--cyan)' : rate >= 50 ? '#eab308' : '#ef4444';
   const wrColor = getWrColor(wr);
 
+  const getTypeLabels = (predType) => {
+    const labels = {
+      DIRECTIONAL: { UP: '\u2191 UP', DOWN: '\u2193 DOWN', FLAT: '\u2192 FLAT', UNKNOWN: '?' },
+      OUTCOME:     { YES: '\u2713 YES', NO: '\u2717 NO', PARTIAL: '~ PARTIAL', UNKNOWN: 'PENDING', PENDING: 'PENDING' },
+      SENTIMENT:   { POSITIVE: '\u2191 POSITIVE', NEGATIVE: '\u2193 NEGATIVE', MIXED: '\u2192 MIXED', UNKNOWN: 'PENDING', PENDING: 'PENDING' },
+    };
+    return labels[(predType || 'OUTCOME').toUpperCase()] || labels.OUTCOME;
+  };
+
   return (
     <div className="animate-fade-in space-y-4" style={{maxWidth:'1100px',margin:'0 auto'}}>
       {/* Header */}
@@ -2615,6 +2624,25 @@ const AccuracyDashboard = ({ data, onClose }) => {
           </div>
         ))}
       </div>
+
+      {/* Prediction Type breakdown */}
+      {data.type_breakdown && Object.keys(data.type_breakdown).length > 0 && (
+        <div className="flex gap-3 flex-wrap" data-testid="type-breakdown">
+          {Object.entries(data.type_breakdown).map(([type, stats]) => (
+            <div key={type} className="bg-panel border border-sw rounded-xl p-3 flex-1 min-w-[120px]">
+              <div style={{fontFamily:'var(--mono)',fontSize:'10px',color:'var(--text3)',marginBottom:'4px',textTransform:'uppercase',letterSpacing:'.04em'}}>
+                {type.toLowerCase()}
+              </div>
+              <div style={{fontFamily:'var(--mono)',fontSize:'22px',fontWeight:'700',color:getWrColor(stats.win_rate)}}>
+                {stats.win_rate}%
+              </div>
+              <div className="text-[11px]" style={{color:'var(--text3)'}}>
+                {stats.correct}/{stats.total}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Domain breakdown */}
       {Object.keys(data.domain_breakdown).length > 0 && (
@@ -2683,19 +2711,32 @@ const AccuracyDashboard = ({ data, onClose }) => {
           <div className="px-4 py-2.5 border-b border-sw" style={{background:'var(--bg3)',fontFamily:'var(--mono)',fontSize:'10px',color:'var(--text3)',textTransform:'uppercase',letterSpacing:'.06em'}}>
             Recent Predictions
           </div>
-          {data.recent.map((rec, i) => (
-            <div key={i} className="flex items-center gap-3 px-4 py-2.5 border-b border-sw last:border-b-0">
-              <div className="w-2 h-2 rounded-full flex-shrink-0" style={{background:rec.direction_correct ? 'var(--cyan)' : '#ef4444'}} />
-              <div className="flex-1 text-xs truncate" style={{color:'var(--text)'}}>{rec.topic || rec.domain?.replace('_',' ')}</div>
-              <div className="text-[10px] flex-shrink-0" style={{color:'var(--text3)'}}>{rec.domain?.replace('_',' ')}</div>
-              <div className="flex-shrink-0" style={{fontFamily:'var(--mono)',fontSize:'11px',color:rec.direction_correct ? 'var(--cyan)' : '#ef4444'}}>
-                {rec.predicted_direction} → {rec.actual_direction || '?'}
+          {data.recent.map((rec, i) => {
+            const typeLabels = getTypeLabels(rec.prediction_type);
+            const predLabel = typeLabels[rec.predicted_direction] || rec.predicted_direction;
+            const actLabel = typeLabels[rec.actual_direction] || (rec.actual_direction || 'pending');
+            const statusColor = rec.direction_correct ? 'var(--cyan)' : rec.status === 'pending' ? '#eab308' : '#ef4444';
+            return (
+              <div key={i} className="flex items-center gap-3 px-4 py-2.5 border-b border-sw last:border-b-0">
+                <div className="w-2 h-2 rounded-full flex-shrink-0" style={{background: statusColor}} />
+                <div className="flex-1 text-xs truncate" style={{color:'var(--text)'}}>{rec.topic || rec.domain?.replace('_',' ')}</div>
+                <div className="text-[10px] flex-shrink-0" style={{
+                  color:'var(--text3)',padding:'2px 6px',background:'rgba(255,255,255,0.05)',
+                  borderRadius:'4px',fontFamily:'var(--mono)'
+                }}>
+                  {(rec.prediction_type || 'outcome').toLowerCase()}
+                </div>
+                <div className="flex-shrink-0" style={{fontFamily:'var(--mono)',fontSize:'11px',color: rec.direction_correct ? 'var(--cyan)' : 'var(--text3)'}}>
+                  {predLabel} → {actLabel}
+                </div>
+                <div style={{fontFamily:'var(--mono)',fontSize:'11px',color:'var(--text3)',flexShrink:0}}>
+                  {rec.composite_score != null
+                    ? `${Math.round(rec.composite_score * 100)}pts`
+                    : rec.status === 'pending' ? 'awaiting' : '\u2014'}
+                </div>
               </div>
-              <div style={{fontFamily:'var(--mono)',fontSize:'11px',color:'var(--text3)',flexShrink:0}}>
-                {rec.composite_score != null ? `${(rec.composite_score * 100).toFixed(0)} pts` : 'pending'}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

@@ -2667,27 +2667,255 @@ async def get_report(session_id: str):
 
 # ── PREDICTION TRACKING ──────────────────────────────────────────────────────
 
-async def freeze_prediction(session_id: str, report: dict, session: dict):
-    """Extract core prediction from report and save as a trackable record."""
-    try:
-        pred = report.get("prediction", {})
-        outcome_text = pred.get("outcome", "")
-        confidence = pred.get("confidence_score", 0.5)
-        timeframe = pred.get("timeframe", "")
-        domain = report.get("domain", "general")
+# Prediction type per domain
+DOMAIN_PREDICTION_TYPE = {
+    "financial":    "DIRECTIONAL",
+    "crypto":       "DIRECTIONAL",
+    "macro":        "DIRECTIONAL",
+    "real_estate":  "DIRECTIONAL",
+    "political":    "OUTCOME",
+    "sports":       "OUTCOME",
+    "business":     "OUTCOME",
+    "science":      "OUTCOME",
+    "legal":        "OUTCOME",
+    "health":       "OUTCOME",
+    "general":      "OUTCOME",
+    "technology":   "SENTIMENT",
+    "entertainment":"SENTIMENT",
+    "geopolitical": "SENTIMENT",
+    "social":       "SENTIMENT",
+    "media":        "SENTIMENT",
+}
 
-        stock_data = report.get("stock_data", [])
-        tickers = [s["ticker"] for s in stock_data if s.get("ticker")]
-        topic = session.get("prediction_query", "")
+PREDICTION_TYPE_LABELS = {
+    "DIRECTIONAL": {"positive": "UP", "negative": "DOWN", "neutral": "FLAT", "unknown": "UNKNOWN"},
+    "OUTCOME":     {"positive": "YES", "negative": "NO", "neutral": "PARTIAL", "unknown": "PENDING"},
+    "SENTIMENT":   {"positive": "POSITIVE", "negative": "NEGATIVE", "neutral": "MIXED", "unknown": "PENDING"},
+}
+
+
+async def reschedule_prediction(record: dict, reason: str):
+    """Push score_at forward by 6 hours when outcome not available yet."""
+    retry_at = datetime.now(timezone.utc) + timedelta(hours=6)
+    retry_count = record.get("retry_count", 0) + 1
+
+    if retry_count > 8:
+        await db.prediction_records.update_one(
+            {"_id": record["_id"]},
+            {"$set": {"status": "expired", "expire_reason": reason}}
+        )
+        logger.warning(f"[Scorer] {record['session_id'][:8]} expired after max retries: {reason}")
+        return
+
+    await db.prediction_records.update_one(
+        {"_id": record["_id"]},
+        {"$set": {
+            "score_at":     retry_at.isoformat(),
+            "retry_count":  retry_count,
+            "retry_reason": reason,
+        }}
+    )
+    logger.info(
+        f"[Scorer] {record['session_id'][:8]} rescheduled "
+        f"(retry {retry_count}/8, reason={reason}) -> {retry_at.strftime('%H:%M UTC')}"
+    )
+
+
+async def fetch_google_news_for_scoring(query: str) -> str:
+    """Fetch Google News headlines for prediction scoring context."""
+    try:
+        import feedparser
+        encoded = urllib.parse.quote(query)
+        url = f"https://news.google.com/rss/search?q={encoded}&hl=en&gl=US&ceid=US:en"
+        loop = asyncio.get_running_loop()
+        feed = await loop.run_in_executor(None, lambda: feedparser.parse(url))
+        headlines = []
+        for entry in feed.entries[:8]:
+            title = entry.get("title", "").strip()
+            title = re.sub(r'<[^>]+>', '', title).strip()
+            if title and len(title) > 15:
+                source = entry.get("source", {}).get("title", "News")
+                headlines.append(f"[{source}] {title}")
+        return "\n".join(headlines)
+    except Exception as e:
+        logger.warning(f"[Scorer] Google News fetch failed: {e}")
+        return ""
+
+
+async def fetch_trends_signal(topic: str, domain: str) -> dict:
+    """Use HN + Wikipedia as a trends proxy signal."""
+    try:
+        hn = await fetch_hacker_news(topic)
+        wiki = await fetch_wikipedia_context(topic)
+        parts = []
+        if hn.get("available"):
+            parts.append(hn.get("signal_text", ""))
+        if wiki.get("available"):
+            parts.append(f"Wikipedia: {wiki.get('summary', '')[:200]}")
+        if parts:
+            return {"available": True, "signal_text": " | ".join(parts)}
+    except Exception as e:
+        logger.warning(f"[Scorer] Trends signal failed: {e}")
+    return {"available": False}
+
+
+async def score_outcome_prediction(record: dict) -> dict:
+    """Score binary OUTCOME predictions (elections, sports, deals, etc.)."""
+    topic     = record.get("topic", "")
+    predicted = record.get("predicted_direction", "YES")
+    outcome   = record.get("predicted_outcome", "")
+    domain    = record.get("domain", "general")
+
+    search_queries = {
+        "political":     f"{topic} election result winner declared",
+        "sports":        f"{topic} match result final score winner",
+        "business":      f"{topic} deal announcement completed signed",
+        "science":       f"{topic} results published trial outcome",
+        "legal":         f"{topic} verdict ruling judgment",
+        "health":        f"{topic} approval results announcement",
+        "entertainment": f"{topic} box office collection opening day result",
+    }
+    search_q = search_queries.get(domain, f"{topic} outcome result")
+
+    actual_text = ""
+    grok_result = await fetch_grok_web_intel(search_q, "current result")
+    if grok_result.get("available") and grok_result.get("brief"):
+        actual_text = grok_result["brief"]
+
+    if not actual_text:
+        actual_text = await fetch_google_news_for_scoring(search_q)
+
+    if not actual_text or len(actual_text) < 30:
+        return {"status": "pending", "reason": "no_outcome_found"}
+
+    try:
+        assessment = await call_claude_fast(
+            "You are an impartial prediction verifier. Be precise. Return ONLY JSON.",
+            f"""Original prediction: "{outcome}"
+Predicted outcome: {predicted} (YES = predicted event happens, NO = does not happen)
+Domain: {domain}
+
+Actual result found:
+{actual_text[:600]}
+
+Assess whether the prediction was correct.
+- If result is not yet available or unclear, set status to "pending"
+- Map outcome to: YES (event happened as predicted), NO (didn't happen), PARTIAL (partially correct)
+
+Return JSON:
+{{"status":"scored|pending","actual_direction":"YES|NO|PARTIAL|UNKNOWN","direction_correct":true|false,"confidence":0.0-1.0,"explanation":"one sentence"}}""",
+            max_tokens=150
+        )
+        result = json.loads(clean_json_response(assessment))
+
+        if result.get("status") == "pending":
+            return {"status": "pending", "reason": "claude_uncertain"}
+
+        direction_correct = result.get("direction_correct", False)
+        if isinstance(direction_correct, str):
+            direction_correct = direction_correct.lower() == 'true'
+
+        actual_direction = result.get("actual_direction", "UNKNOWN")
+        if actual_direction not in ["YES", "NO", "PARTIAL", "UNKNOWN"]:
+            actual_direction = "UNKNOWN"
+
+        if actual_direction == "PARTIAL" and predicted in ["YES", "NO"]:
+            direction_correct = False
+
+        return {
+            "status":            "scored",
+            "actual_direction":  actual_direction,
+            "direction_correct": direction_correct,
+            "actual_text":       actual_text[:300],
+            "explanation":       result.get("explanation", ""),
+        }
+    except Exception as e:
+        logger.error(f"[Scorer] Outcome assessment failed: {e}")
+        return {"status": "pending", "reason": str(e)[:80]}
+
+
+async def score_sentiment_prediction(record: dict) -> dict:
+    """Score SENTIMENT predictions (technology trends, geopolitics, social)."""
+    topic     = record.get("topic", "")
+    predicted = record.get("predicted_direction", "POSITIVE")
+    outcome   = record.get("predicted_outcome", "")
+
+    actual_text = ""
+    grok_result = await fetch_grok_web_intel(
+        f"{topic} public opinion sentiment reaction", "current sentiment"
+    )
+    if grok_result.get("available"):
+        actual_text = grok_result.get("brief", "")
+
+    trends_result = await fetch_trends_signal(topic, record.get("domain", "general"))
+    trends_text   = trends_result.get("signal_text", "") if trends_result.get("available") else ""
+
+    combined = f"{actual_text}\n{trends_text}".strip()
+
+    if not combined or len(combined) < 30:
+        return {"status": "pending", "reason": "no_sentiment_data"}
+
+    try:
+        assessment = await call_claude_fast(
+            "You are a sentiment analyst. Return ONLY JSON.",
+            f"""Predicted: "{outcome}"
+Predicted sentiment direction: {predicted} (POSITIVE / NEGATIVE / MIXED)
+
+Current information:
+{combined[:600]}
+
+Did the predicted sentiment direction match reality?
+- POSITIVE: public/market/media sentiment shifted positive
+- NEGATIVE: shifted negative
+- MIXED: no clear direction
+
+Return JSON:
+{{"status":"scored|pending","actual_direction":"POSITIVE|NEGATIVE|MIXED|UNKNOWN","direction_correct":true|false,"confidence":0.0-1.0,"explanation":"one sentence"}}""",
+            max_tokens=150
+        )
+        result = json.loads(clean_json_response(assessment))
+
+        if result.get("status") == "pending":
+            return {"status": "pending", "reason": "sentiment_unclear"}
+
+        direction_correct = result.get("direction_correct", False)
+        if isinstance(direction_correct, str):
+            direction_correct = direction_correct.lower() == 'true'
+
+        return {
+            "status":            "scored",
+            "actual_direction":  result.get("actual_direction", "UNKNOWN"),
+            "direction_correct": direction_correct,
+            "actual_text":       combined[:300],
+            "explanation":       result.get("explanation", ""),
+        }
+    except Exception as e:
+        logger.error(f"[Scorer] Sentiment assessment failed: {e}")
+        return {"status": "pending", "reason": str(e)[:80]}
+
+
+async def freeze_prediction(session_id: str, report: dict, session: dict):
+    """Freeze prediction at simulation time. Extracts prediction type appropriate to domain."""
+    try:
+        pred         = report.get("prediction", {})
+        outcome_text = pred.get("outcome", "")
+        confidence   = pred.get("confidence_score", 0.5)
+        timeframe    = pred.get("timeframe", "24 hours")
+        domain       = report.get("domain", session.get("domain", "general"))
+        topic        = session.get("prediction_query", "")
+        stock_data   = report.get("stock_data", [])
+        tickers      = [s["ticker"] for s in stock_data if s.get("ticker")]
+
+        pred_type = DOMAIN_PREDICTION_TYPE.get(domain, "OUTCOME")
 
         # Determine horizon in hours
         horizon_map = {
             "24 hour": 24, "next 24": 24, "tomorrow": 24,
-            "next session": 10, "intraday": 10,
-            "next week": 168, "week": 168,
-            "next month": 720, "month": 720,
+            "next session": 10, "intraday": 10, "today": 12,
+            "next week": 168, "week": 168, "7 day": 168,
+            "next month": 720, "month": 720, "30 day": 720,
             "3 month": 2160, "quarter": 2160,
-            "6 month": 4320, "year": 8760,
+            "6 month": 4320, "year": 8760, "long term": 8760,
         }
         horizon_hours = 24
         tf_lower = timeframe.lower()
@@ -2696,72 +2924,126 @@ async def freeze_prediction(session_id: str, report: dict, session: dict):
                 horizon_hours = hours
                 break
 
-        # Extract direction from outcome text
         outcome_lower = outcome_text.lower()
-        predicted_direction = (
-            "UP" if any(w in outcome_lower for w in ["rise", "gain", "rally", "up", "higher", "bullish", "increase", "positive"]) else
-            "DOWN" if any(w in outcome_lower for w in ["fall", "drop", "crash", "down", "lower", "bearish", "decrease", "negative", "decline"]) else
-            "FLAT"
-        )
-
-        # Extract predicted level if present
+        predicted_direction = "UNKNOWN"
         predicted_level = None
-        level_match = re.search(r'[\₹\$]?([\d,]+(?:\.\d+)?)', outcome_text)
-        if level_match:
-            try:
-                predicted_level = float(level_match.group(1).replace(",", ""))
-            except ValueError:
-                predicted_level = None
+        predicted_level_text = ""
+
+        if pred_type == "DIRECTIONAL":
+            predicted_direction = (
+                "UP"   if any(w in outcome_lower for w in
+                              ["rise","gain","rally","up","higher","bullish","increase","positive","above"]) else
+                "DOWN" if any(w in outcome_lower for w in
+                              ["fall","drop","crash","down","lower","bearish","decrease","negative","below","decline"]) else
+                "FLAT"
+            )
+            level_match = re.search(r'[\₹\$]?([\d,]+(?:\.\d+)?)', outcome_text)
+            if level_match:
+                try:
+                    predicted_level = float(level_match.group(1).replace(",", ""))
+                except ValueError:
+                    predicted_level = None
+            predicted_level_text = f"Target: {predicted_level}" if predicted_level is not None else ""
+
+        elif pred_type == "OUTCOME":
+            positive_signals = [
+                "win","wins","victory","succeed","pass","approve","elected",
+                "beats","defeats","breaks","achieves","yes","will happen",
+                "likely","expected","predicted to","favoured","positive"
+            ]
+            negative_signals = [
+                "lose","loses","defeat","fail","reject","blocked",
+                "unlikely","won't","will not","no","negative","falls short"
+            ]
+            pos_count = sum(1 for w in positive_signals if w in outcome_lower)
+            neg_count = sum(1 for w in negative_signals if w in outcome_lower)
+            predicted_direction = "YES" if pos_count >= neg_count else "NO"
+            entity_match = re.search(
+                r'([A-Z][A-Za-z\s]{2,20})\s+(?:will|would|is expected to|likely to)',
+                outcome_text
+            )
+            if entity_match:
+                predicted_level_text = f"Predicted: {entity_match.group(1).strip()}"
+
+        else:  # SENTIMENT
+            positive_signals = [
+                "positive","improve","grow","rise","increase","surge","recover",
+                "dominate","succeed","popular","bullish","optimistic","favor"
+            ]
+            negative_signals = [
+                "negative","worsen","decline","fall","decrease","collapse",
+                "fail","unpopular","bearish","pessimistic","against","controversy"
+            ]
+            pos_count = sum(1 for w in positive_signals if w in outcome_lower)
+            neg_count = sum(1 for w in negative_signals if w in outcome_lower)
+            predicted_direction = "POSITIVE" if pos_count > neg_count else "NEGATIVE" if neg_count > pos_count else "MIXED"
 
         baseline_prices = {}
         for s in stock_data:
             baseline_prices[s["ticker"]] = s.get("last_close", 0)
 
-        opinion = report.get("opinion_landscape", {})
+        opinion  = report.get("opinion_landscape", {})
         score_at = datetime.now(timezone.utc) + timedelta(hours=horizon_hours)
 
-        record = {
-            "session_id": session_id,
-            "topic": topic,
-            "domain": domain,
-            "tickers": tickers,
-            "baseline_prices": baseline_prices,
-            "predicted_direction": predicted_direction,
-            "predicted_level": predicted_level,
-            "predicted_outcome": outcome_text[:300],
-            "confidence_score": confidence,
-            "support_pct": opinion.get("support_percentage", 50),
-            "opposition_pct": opinion.get("opposition_percentage", 30),
-            "horizon_hours": horizon_hours,
-            "predicted_at": datetime.now(timezone.utc).isoformat(),
-            "score_at": score_at.isoformat(),
-            "status": "pending",
-            "direction_correct": None,
-            "actual_direction": None,
-            "actual_price": None,
-            "level_error_pct": None,
-            "calibration_delta": None,
-            "composite_score": None,
-            "agent_calls": [],
-        }
-
-        # Agent belief positions for accuracy tracking
+        # Build agent calls with type-aware directions
         agents = json.loads(session.get("agents_json", "[]"))
+        agent_calls = []
         for agent in agents:
-            bs = agent.get("belief_state", {})
+            bs       = agent.get("belief_state", {})
             position = bs.get("position", 0.0)
-            agent_direction = "UP" if position > 0.1 else "DOWN" if position < -0.1 else "FLAT"
-            record["agent_calls"].append({
-                "agent_id": agent.get("id", ""),
-                "agent_name": agent.get("name", ""),
-                "personality_type": agent.get("personality_type", ""),
-                "predicted_direction": agent_direction,
-                "belief_position": position,
-                "correct": None,
+
+            if pred_type == "DIRECTIONAL":
+                agent_dir = "UP" if position > 0.1 else "DOWN" if position < -0.1 else "FLAT"
+            elif pred_type == "OUTCOME":
+                agent_dir = "YES" if position > 0.1 else "NO" if position < -0.1 else "PARTIAL"
+            else:
+                agent_dir = "POSITIVE" if position > 0.1 else "NEGATIVE" if position < -0.1 else "MIXED"
+
+            agent_calls.append({
+                "agent_id":            agent.get("id", ""),
+                "agent_name":          agent.get("name", ""),
+                "personality_type":    agent.get("personality_type", ""),
+                "occupation":          agent.get("occupation", ""),
+                "predicted_direction": agent_dir,
+                "belief_position":     position,
+                "correct":             None,
             })
 
+        record = {
+            "session_id":              session_id,
+            "topic":                   topic,
+            "domain":                  domain,
+            "prediction_type":         pred_type,
+            "tickers":                 tickers,
+            "baseline_prices":         baseline_prices,
+            "predicted_direction":     predicted_direction,
+            "predicted_outcome_label": predicted_direction,
+            "predicted_level":         predicted_level,
+            "predicted_level_text":    predicted_level_text,
+            "predicted_outcome":       outcome_text[:400],
+            "confidence_score":        confidence,
+            "support_pct":             opinion.get("support_percentage", 50),
+            "opposition_pct":          opinion.get("opposition_percentage", 30),
+            "horizon_hours":           horizon_hours,
+            "predicted_at":            datetime.now(timezone.utc).isoformat(),
+            "score_at":                score_at.isoformat(),
+            "status":                  "pending",
+            "direction_correct":       None,
+            "actual_direction":        None,
+            "actual_price":            None,
+            "actual_outcome_text":     None,
+            "level_error_pct":         None,
+            "calibration_delta":       None,
+            "composite_score":         None,
+            "agent_calls":             agent_calls,
+            "retry_count":             0,
+        }
+
         await db.prediction_records.insert_one(record)
-        logger.info(f"[Track] Prediction frozen for session {session_id[:8]} — scores at {score_at.strftime('%Y-%m-%d %H:%M UTC')}")
+        logger.info(
+            f"[Track] Frozen: '{topic[:40]}' | type={pred_type} | "
+            f"direction={predicted_direction} | scores at {score_at.strftime('%Y-%m-%d %H:%M UTC')}"
+        )
     except Exception as e:
         logger.error(f"[Track] Failed to freeze prediction for {session_id[:8]}: {e}")
 
@@ -2797,172 +3079,166 @@ async def score_pending_predictions():
 
 
 async def score_single_prediction(record: dict, yf):
-    """Score one prediction record against real outcomes."""
-    domain = record.get("domain", "general")
-    tickers = record.get("tickers", [])
-    baseline = record.get("baseline_prices", {})
-    predicted_dir = record.get("predicted_direction", "FLAT")
-    predicted_level = record.get("predicted_level")
-    confidence = record.get("confidence_score", 0.5)
+    """Score a prediction record against real-world outcomes. Routes to correct scorer based on prediction_type."""
+    pred_type   = record.get("prediction_type", DOMAIN_PREDICTION_TYPE.get(record.get("domain", "general"), "OUTCOME"))
+    domain      = record.get("domain", "general")
+    topic       = record.get("topic", "")
+    predicted   = record.get("predicted_direction", "")
+    confidence  = record.get("confidence_score", 0.5)
 
-    actual_price = None
-    actual_direction = "FLAT"
+    actual_direction  = None
+    actual_price      = None
+    actual_text       = None
     direction_correct = False
-    level_error_pct = None
+    level_error_pct   = None
 
-    # Market predictions: use yfinance
-    if domain in ["financial", "stock_market", "crypto", "macro"] and tickers:
+    # ── DIRECTIONAL: financial price comparison ───────────────────────────
+    if pred_type == "DIRECTIONAL":
+        tickers        = record.get("tickers", [])
+        baseline       = record.get("baseline_prices", {})
+        predicted_level = record.get("predicted_level")
+
+        if not tickers:
+            await reschedule_prediction(record, "no_tickers")
+            return
+
         primary_ticker = tickers[0]
         baseline_price = baseline.get(primary_ticker, 0)
 
-        def _fetch_current():
-            import yfinance as yf
-            import time
-
-            # Try multiple ticker variants for Indian indices
-            ticker_variants = [primary_ticker]
-            if primary_ticker == "^NSEI":
-                ticker_variants = ["^NSEI", "NIFTY50.NS", "NIFTYBEES.NS"]
-            elif primary_ticker == "^BSESN":
-                ticker_variants = ["^BSESN", "SENSEX.NS"]
-            elif primary_ticker == "^NSEBANK":
-                ticker_variants = ["^NSEBANK", "BANKBEES.NS"]
-
-            for ticker_sym in ticker_variants:
-                for attempt in range(3):
-                    try:
-                        t = yf.Ticker(ticker_sym)
-                        hist = t.history(period="5d", interval="1d")
-                        if not hist.empty and len(hist) > 0:
-                            price = float(hist["Close"].iloc[-1])
-                            if price > 0:
-                                logger.info(f"[Scorer] Got price {price} from {ticker_sym}")
-                                return price
-                        time.sleep(1)
-                    except Exception as e:
-                        logger.debug(f"[Scorer] {ticker_sym} attempt {attempt+1} failed: {e}")
-                        time.sleep(1)
-
-            # All variants failed — try fast_info as last resort
-            try:
-                t = yf.Ticker("^NSEI")
-                fi = t.fast_info
-                p = getattr(fi, "last_price", None)
-                if p and p > 0:
-                    return float(p)
-            except Exception:
-                pass
-
-            logger.warning(f"[Scorer] All price fetch attempts failed for {primary_ticker}")
-            return None
+        ticker_variants = [primary_ticker]
+        if primary_ticker in ["^NSEI", "NIFTY50"]:
+            ticker_variants = ["^NSEI", "NIFTY50.NS", "^CNXNIFTY"]
+        elif primary_ticker in ["^BSESN", "SENSEX"]:
+            ticker_variants = ["^BSESN", "SENSEX.NS"]
+        elif primary_ticker == "^NSEBANK":
+            ticker_variants = ["^NSEBANK", "BANKNIFTY.NS"]
 
         loop = asyncio.get_event_loop()
-        actual_price = await loop.run_in_executor(None, _fetch_current)
+
+        def _fetch_price():
+            import time
+            for sym in ticker_variants:
+                for attempt in range(2):
+                    try:
+                        t    = yf.Ticker(sym)
+                        hist = t.history(period="5d", interval="1d")
+                        if not hist.empty:
+                            price = float(hist["Close"].iloc[-1])
+                            if price > 0:
+                                logger.info(f"[Scorer] {sym}: {price}")
+                                return price, sym
+                    except Exception as e:
+                        logger.debug(f"[Scorer] {sym} attempt {attempt+1}: {e}")
+                    time.sleep(0.5)
+            try:
+                fi = yf.Ticker(ticker_variants[0]).fast_info
+                p  = getattr(fi, "last_price", None)
+                if p and float(p) > 0:
+                    return float(p), ticker_variants[0]
+            except Exception:
+                pass
+            return None, None
+
+        actual_price, used_ticker = await loop.run_in_executor(None, _fetch_price)
 
         if actual_price is None:
-            # Reschedule for 2 hours later instead of marking UNKNOWN
-            retry_at = datetime.now(timezone.utc) + timedelta(hours=2)
-            await db.prediction_records.update_one(
-                {"_id": record["_id"]},
-                {"$set": {
-                    "status": "pending",
-                    "score_at": retry_at.isoformat(),
-                    "retry_reason": "price_fetch_failed"
-                }}
-            )
-            logger.warning(
-                f"[Scorer] {record['session_id'][:8]} price unavailable - "
-                f"rescheduled for {retry_at.strftime('%H:%M UTC')}"
-            )
+            await reschedule_prediction(record, "price_unavailable")
             return
 
-        if baseline_price and baseline_price != 0:
-            change_pct = ((actual_price - baseline_price) / baseline_price) * 100
-            actual_direction = "UP" if change_pct > 0.3 else "DOWN" if change_pct < -0.3 else "FLAT"
-            direction_correct = (predicted_dir == actual_direction)
+        if baseline_price > 0:
+            change_pct = (actual_price - baseline_price) / baseline_price * 100
+            actual_direction  = "UP" if change_pct > 0.3 else "DOWN" if change_pct < -0.3 else "FLAT"
+            direction_correct = (predicted == actual_direction)
+            if predicted_level is not None and predicted_level > 0:
+                level_error_pct = abs(actual_price - predicted_level) / predicted_level * 100
+        else:
+            actual_direction  = "UNKNOWN"
+            direction_correct = False
 
-            if predicted_level is not None and predicted_level != 0:
-                level_error_pct = abs(actual_price - predicted_level) / abs(predicted_level) * 100
+    # ── OUTCOME: binary event (election, sports, business deal) ──────────
+    elif pred_type == "OUTCOME":
+        result = await score_outcome_prediction(record)
+        if result.get("status") == "pending":
+            await reschedule_prediction(record, result.get("reason", "outcome_not_found"))
+            return
+        actual_direction  = result.get("actual_direction", "UNKNOWN")
+        actual_text       = result.get("actual_text", "")
+        direction_correct = result.get("direction_correct", False)
 
-    # Non-market: use Claude-based outcome scoring
-    else:
-        topic = record.get("topic", "")
-        predicted_outcome = record.get("predicted_outcome", "")
-        if topic:
-            try:
-                from services.agents.common import clean_json
-                scoring_response = await call_claude_fast(
-                    "You are an outcome scorer. Determine if a prediction was correct based on current reality.",
-                    f'Prediction topic: {topic}\nPredicted outcome: {predicted_outcome}\nPredicted direction: {predicted_dir}\nDomain: {domain}\n\nBased on your latest knowledge, score this prediction.\nReturn JSON: {{"actual_direction":"UP|DOWN|FLAT","confidence":0.0-1.0,"reasoning":"brief explanation"}}',
-                    max_tokens=150
-                )
-                score_data = json.loads(clean_json(scoring_response))
-                actual_direction = score_data.get("actual_direction", "FLAT")
-                direction_correct = (predicted_dir == actual_direction)
-                logger.info(f"[Scorer] Claude scored {domain}: {predicted_dir}->{actual_direction} ({'CORRECT' if direction_correct else 'WRONG'})")
-            except Exception as e:
-                logger.error(f"[Scorer] Claude scoring error: {e}")
+    # ── SENTIMENT: trend/opinion assessment ───────────────────────────────
+    elif pred_type == "SENTIMENT":
+        result = await score_sentiment_prediction(record)
+        if result.get("status") == "pending":
+            await reschedule_prediction(record, result.get("reason", "sentiment_unclear"))
+            return
+        actual_direction  = result.get("actual_direction", "UNKNOWN")
+        actual_text       = result.get("actual_text", "")
+        direction_correct = result.get("direction_correct", False)
 
-    # Composite score: 70% direction, 30% level accuracy
+    # ── Compute composite score ───────────────────────────────────────────
     direction_score = 1.0 if direction_correct else 0.0
     level_score = 1.0
     if level_error_pct is not None:
-        level_score = max(0.0, 1.0 - (min(level_error_pct, 1000.0) / 10.0))
-
-    composite_score = round(direction_score * 0.7 + level_score * 0.3, 3)
+        level_score = max(0.0, 1.0 - (level_error_pct / 10.0))
+    composite_score = round(max(0.0, min(1.0, direction_score * 0.7 + level_score * 0.3)), 3)
     calibration_delta = round(confidence - direction_score, 3)
 
-    # Score agent predictions
+    # ── Score individual agents ───────────────────────────────────────────
     scored_agents = []
-    for agent_call in record.get("agent_calls", []):
-        agent_correct = (agent_call.get("predicted_direction") == actual_direction)
-        scored_agents.append({**agent_call, "correct": agent_correct})
+    now = datetime.now(timezone.utc)
+    for call in record.get("agent_calls", []):
+        agent_dir = call.get("predicted_direction")
+        if pred_type == "OUTCOME" and actual_direction == "PARTIAL":
+            agent_correct = (agent_dir == "PARTIAL")
+        else:
+            agent_correct = (agent_dir == actual_direction)
 
+        scored_agents.append({**call, "correct": agent_correct})
         await db.agent_accuracy.update_one(
-            {"agent_name": agent_call["agent_name"], "personality_type": agent_call["personality_type"]},
+            {"agent_name": call["agent_name"], "personality_type": call["personality_type"]},
             {"$inc": {
-                "total_predictions": 1,
+                "total_predictions":   1,
                 "correct_predictions": 1 if agent_correct else 0,
-            }, "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}},
+            }, "$set": {"updated_at": now.isoformat()}},
             upsert=True,
         )
 
-    now_scored = datetime.now(timezone.utc)
-    update_fields = {
-        "status": "scored",
-        "direction_correct": direction_correct,
-        "actual_direction": actual_direction,
-        "actual_price": actual_price,
-        "level_error_pct": level_error_pct,
-        "calibration_delta": calibration_delta,
-        "composite_score": composite_score,
-        "agent_calls": scored_agents,
-        "scored_at": now_scored.isoformat(),
-    }
-    update_fields = {k: v for k, v in update_fields.items() if v is not None}
-
+    # ── Save scored record ────────────────────────────────────────────────
     await db.prediction_records.update_one(
         {"_id": record["_id"]},
-        {"$set": update_fields}
+        {"$set": {
+            "status":              "scored",
+            "direction_correct":   direction_correct,
+            "actual_direction":    actual_direction,
+            "actual_price":        actual_price,
+            "actual_outcome_text": actual_text,
+            "level_error_pct":     level_error_pct,
+            "calibration_delta":   calibration_delta,
+            "composite_score":     composite_score,
+            "agent_calls":         scored_agents,
+            "scored_at":           now.isoformat(),
+        }}
     )
 
-    # Update global accuracy summary
+    # Update global accuracy summary with type tracking
     await db.accuracy_summary.update_one(
         {"_id": "global"},
         {"$inc": {
-            "total_scored": 1,
-            "total_correct": 1 if direction_correct else 0,
-            f"domain_{domain}": 1,
-            f"domain_{domain}_correct": 1 if direction_correct else 0,
-        }, "$set": {"updated_at": now_scored.isoformat()}},
+            "total_scored":                          1,
+            "total_correct":                         1 if direction_correct else 0,
+            f"type_{pred_type.lower()}":             1,
+            f"type_{pred_type.lower()}_correct":     1 if direction_correct else 0,
+            f"domain_{domain}":                      1,
+            f"domain_{domain}_correct":              1 if direction_correct else 0,
+        }, "$set": {"updated_at": now.isoformat()}},
         upsert=True,
     )
 
     logger.info(
-        f"[Scorer] {record['session_id'][:8]} scored: "
-        f"{predicted_dir} -> actual {actual_direction} | "
+        f"[Scorer] '{topic[:30]}' ({pred_type}) -> "
+        f"{predicted} -> actual {actual_direction} | "
         f"{'CORRECT' if direction_correct else 'WRONG'} | "
-        f"composite={composite_score:.2f}"
+        f"score={composite_score:.2f}"
     )
 
 
@@ -2988,25 +3264,40 @@ async def get_accuracy_stats():
     win_rate = round((correct / total * 100) if total > 0 else 0, 1)
 
     recent = await db.prediction_records.find(
-        {"status": "scored"},
+        {"status": {"$in": ["scored", "pending"]}},
         {"_id": 0, "session_id": 1, "topic": 1, "domain": 1,
-         "predicted_direction": 1, "actual_direction": 1,
+         "prediction_type": 1, "predicted_direction": 1, "actual_direction": 1,
          "direction_correct": 1, "composite_score": 1,
-         "confidence_score": 1, "scored_at": 1}
-    ).sort([("scored_at", -1)]).limit(20).to_list(20)
+         "confidence_score": 1, "scored_at": 1, "predicted_at": 1, "status": 1}
+    ).sort([("predicted_at", -1)]).limit(20).to_list(20)
 
     pending_count = await db.prediction_records.count_documents({"status": "pending"})
 
-    # Domain breakdown
+    # Domain breakdown — check all universal domains
     domain_stats = {}
-    for d in ["stock_market", "crypto", "political", "macro", "general"]:
+    all_domains = ["financial", "crypto", "political", "macro", "general", "sports",
+                   "technology", "entertainment", "geopolitical", "business", "science",
+                   "social", "legal", "health", "real_estate", "media"]
+    for d in all_domains:
         d_total = summary.get(f"domain_{d}", 0)
         d_correct = summary.get(f"domain_{d}_correct", 0)
         if d_total > 0:
-            domain_stats[d] = {
+            domain_stats[d.upper()] = {
                 "total": d_total,
                 "correct": d_correct,
                 "win_rate": round((d_correct / d_total * 100), 1),
+            }
+
+    # Type breakdown
+    type_breakdown = {}
+    for pred_type in ["DIRECTIONAL", "OUTCOME", "SENTIMENT"]:
+        t_total   = summary.get(f"type_{pred_type.lower()}", 0)
+        t_correct = summary.get(f"type_{pred_type.lower()}_correct", 0)
+        if t_total > 0:
+            type_breakdown[pred_type] = {
+                "total":    t_total,
+                "correct":  t_correct,
+                "win_rate": round(t_correct / t_total * 100, 1),
             }
 
     # Top agents
@@ -3058,6 +3349,7 @@ async def get_accuracy_stats():
         "win_rate": win_rate,
         "pending": pending_count,
         "domain_breakdown": domain_stats,
+        "type_breakdown": type_breakdown,
         "top_agents": top_agents,
         "calibration": calibration,
         "recent": recent,
@@ -3069,10 +3361,12 @@ async def get_prediction_outcome(session_id: str):
     """Returns the scoring result for a specific session's prediction."""
     record = await db.prediction_records.find_one(
         {"session_id": session_id},
-        {"_id": 0, "session_id": 1, "status": 1, "predicted_direction": 1,
-         "actual_direction": 1, "actual_price": 1, "direction_correct": 1,
+        {"_id": 0, "session_id": 1, "status": 1, "prediction_type": 1,
+         "predicted_direction": 1, "actual_direction": 1, "actual_price": 1,
+         "actual_outcome_text": 1, "direction_correct": 1,
          "composite_score": 1, "scored_at": 1, "predicted_outcome": 1,
-         "confidence_score": 1, "level_error_pct": 1, "score_at": 1}
+         "confidence_score": 1, "level_error_pct": 1, "score_at": 1,
+         "retry_count": 1, "domain": 1}
     )
     if not record:
         return {"status": "not_tracked"}

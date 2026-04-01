@@ -26,16 +26,9 @@ Build **SwarmSim**, a Swarm Intelligence Prediction Engine. Users run AI agent s
 - [x] Prediction Tracking System (freeze, APScheduler scoring, accuracy dashboard)
 - [x] Cyberpunk dark theme UI
 - [x] **Universal Prediction Model** — 3-type scoring (DIRECTIONAL/OUTCOME/SENTIMENT)
-  - DOMAIN_PREDICTION_TYPE: 16 domains → 3 prediction types
-  - PREDICTION_TYPE_LABELS: Type-aware UI labels
-  - score_outcome_prediction: Binary event scoring (Grok + News + Claude)
-  - score_sentiment_prediction: Sentiment trend scoring (Grok + Trends + Claude)
-  - reschedule_prediction: Retry logic (max 8 retries, 6h intervals)
-  - Type-aware freeze_prediction + score_single_prediction routing
-  - AccuracyDashboard: type badges, type_breakdown section, status-aware dots
-
-## Universal Domain Classifier (16 domains)
-financial, crypto, political, sports, technology, entertainment, geopolitical, business, science, social, legal, macro, real_estate, health, general
+- [x] **Bug Fix: Auto-question wrapping** — build_prediction_question() respects user input
+- [x] **Bug Fix: NIFTY 50 classification** — Enhanced KEYWORD_MAP + ticker-based DIRECTIONAL override
+- [x] **Bug Fix: Wrong direction labels** — Type-aware labels (YES/NO for OUTCOME, POSITIVE/NEGATIVE for SENTIMENT)
 
 ## Prediction Type Mapping
 - DIRECTIONAL: financial, crypto, macro, real_estate (UP/DOWN/FLAT)
@@ -64,6 +57,7 @@ financial, crypto, political, sports, technology, entertainment, geopolitical, b
 - OOM: Do NOT re-enable chunk_and_extract concurrency
 - Timeout: Do NOT revert Graph/Intel agents to Sonnet 4
 - Indian indices: yfinance requires multiple ticker variant fallbacks
+- Legacy predictions in DB have old domain/direction values (pre-bugfix)
 
 ## 3rd Party Integrations
 - Emergent Proxy (EMERGENT_LLM_KEY), xAI Grok (XAI_API_KEY), yfinance, feedparser, APScheduler

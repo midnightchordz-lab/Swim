@@ -25,9 +25,22 @@ Build **SwarmSim**, a Swarm Intelligence Prediction Engine. Users run AI agent s
 - [x] 3-Tier LLM Cost Reduction + 12-point optimizations
 - [x] Prediction Tracking System (freeze, APScheduler scoring, accuracy dashboard)
 - [x] Cyberpunk dark theme UI
+- [x] **Universal Prediction Model** — 3-type scoring (DIRECTIONAL/OUTCOME/SENTIMENT)
+  - DOMAIN_PREDICTION_TYPE: 16 domains → 3 prediction types
+  - PREDICTION_TYPE_LABELS: Type-aware UI labels
+  - score_outcome_prediction: Binary event scoring (Grok + News + Claude)
+  - score_sentiment_prediction: Sentiment trend scoring (Grok + Trends + Claude)
+  - reschedule_prediction: Retry logic (max 8 retries, 6h intervals)
+  - Type-aware freeze_prediction + score_single_prediction routing
+  - AccuracyDashboard: type badges, type_breakdown section, status-aware dots
 
 ## Universal Domain Classifier (16 domains)
 financial, crypto, political, sports, technology, entertainment, geopolitical, business, science, social, legal, macro, real_estate, health, general
+
+## Prediction Type Mapping
+- DIRECTIONAL: financial, crypto, macro, real_estate (UP/DOWN/FLAT)
+- OUTCOME: political, sports, business, science, legal, health, general (YES/NO/PARTIAL)
+- SENTIMENT: technology, entertainment, geopolitical, social, media (POSITIVE/NEGATIVE/MIXED)
 
 ## Speed Optimizations
 - Intel Agent: Haiku (was Sonnet) — 10s vs 30s
@@ -46,6 +59,11 @@ financial, crypto, political, sports, technology, entertainment, geopolitical, b
 
 ### P3
 - Custom agent creation, simulation templates, shareable links
+
+## Known Constraints
+- OOM: Do NOT re-enable chunk_and_extract concurrency
+- Timeout: Do NOT revert Graph/Intel agents to Sonnet 4
+- Indian indices: yfinance requires multiple ticker variant fallbacks
 
 ## 3rd Party Integrations
 - Emergent Proxy (EMERGENT_LLM_KEY), xAI Grok (XAI_API_KEY), yfinance, feedparser, APScheduler

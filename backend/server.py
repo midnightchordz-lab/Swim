@@ -144,7 +144,10 @@ UNIVERSAL_DOMAINS = {
 }
 
 KEYWORD_MAP = {
-    "financial": ["nifty","sensex","stock","share","bse","nse","equity","market cap",
+    "financial": ["nifty","nifty50","nifty 50","sensex","^nsei","^bsesn",
+                  "banknifty","bank nifty","midcap","smallcap","nse index",
+                  "bse index","dalal street",
+                  "stock","share","bse","nse","equity","market cap",
                   "ipo","mutual fund","etf","futures","options","sebi","earnings",
                   "revenue","profit","nasdaq","s&p","dow","trading"],
     "crypto": ["bitcoin","btc","ethereum","eth","crypto","defi","nft","blockchain",
@@ -2813,20 +2816,67 @@ async def score_single_prediction(record: dict, yf):
         baseline_price = baseline.get(primary_ticker, 0)
 
         def _fetch_current():
+            import yfinance as yf
+            import time
+
+            # Try multiple ticker variants for Indian indices
+            ticker_variants = [primary_ticker]
+            if primary_ticker == "^NSEI":
+                ticker_variants = ["^NSEI", "NIFTY50.NS", "NIFTYBEES.NS"]
+            elif primary_ticker == "^BSESN":
+                ticker_variants = ["^BSESN", "SENSEX.NS"]
+            elif primary_ticker == "^NSEBANK":
+                ticker_variants = ["^NSEBANK", "BANKBEES.NS"]
+
+            for ticker_sym in ticker_variants:
+                for attempt in range(3):
+                    try:
+                        t = yf.Ticker(ticker_sym)
+                        hist = t.history(period="5d", interval="1d")
+                        if not hist.empty and len(hist) > 0:
+                            price = float(hist["Close"].iloc[-1])
+                            if price > 0:
+                                logger.info(f"[Scorer] Got price {price} from {ticker_sym}")
+                                return price
+                        time.sleep(1)
+                    except Exception as e:
+                        logger.debug(f"[Scorer] {ticker_sym} attempt {attempt+1} failed: {e}")
+                        time.sleep(1)
+
+            # All variants failed — try fast_info as last resort
             try:
-                t = yf.Ticker(primary_ticker)
-                hist = t.history(period="2d", interval="1d")
-                if not hist.empty:
-                    return float(hist["Close"].iloc[-1])
-                return None
-            except Exception as e:
-                logger.error(f"[Scorer] yfinance error for {primary_ticker}: {e}")
-                return None
+                t = yf.Ticker("^NSEI")
+                fi = t.fast_info
+                p = getattr(fi, "last_price", None)
+                if p and p > 0:
+                    return float(p)
+            except Exception:
+                pass
+
+            logger.warning(f"[Scorer] All price fetch attempts failed for {primary_ticker}")
+            return None
 
         loop = asyncio.get_event_loop()
         actual_price = await loop.run_in_executor(None, _fetch_current)
 
-        if actual_price is not None and baseline_price and baseline_price != 0:
+        if actual_price is None:
+            # Reschedule for 2 hours later instead of marking UNKNOWN
+            retry_at = datetime.now(timezone.utc) + timedelta(hours=2)
+            await db.prediction_records.update_one(
+                {"_id": record["_id"]},
+                {"$set": {
+                    "status": "pending",
+                    "score_at": retry_at.isoformat(),
+                    "retry_reason": "price_fetch_failed"
+                }}
+            )
+            logger.warning(
+                f"[Scorer] {record['session_id'][:8]} price unavailable - "
+                f"rescheduled for {retry_at.strftime('%H:%M UTC')}"
+            )
+            return
+
+        if baseline_price and baseline_price != 0:
             change_pct = ((actual_price - baseline_price) / baseline_price) * 100
             actual_direction = "UP" if change_pct > 0.3 else "DOWN" if change_pct < -0.3 else "FLAT"
             direction_correct = (predicted_dir == actual_direction)

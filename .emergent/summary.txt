@@ -1,135 +1,139 @@
 <analysis>**original_problem_statement**: 
-The user wants to build **SwarmSim**, a highly advanced Swarm Intelligence Prediction Engine. The application allows users to run complex AI agent simulations to predict outcomes on various topics (financial, political, social). Core features include real-time web scraping, RSS news parsing, live financial data (), a 6-agent Orchestrator pipeline, advanced AI behaviors, a Three-Tier Population Scaling System, and a 3-Tier LLM Cost Reduction Routing Strategy (Sonnet 4 + Haiku + Gemini Flash) to simulate up to 100,000 agents cost-effectively.
+The user is building **SwarmSim**, a highly advanced Swarm Intelligence Prediction Engine. The application allows users to run complex AI agent simulations to predict outcomes on various topics (financial, political, social). Core features include real-time web scraping, RSS news parsing, live financial data (), a 6-agent Orchestrator pipeline, a 3-Tier LLM Cost Reduction Routing Strategy, Grok real-time X/Twitter data integration, and a Stock Prediction Engine. 
+
+PRODUCT REQUIREMENTS: Implement continuous upgrades to prediction tracking, GraphRAG extraction, and universal domain classification to improve simulation accuracy and speed.
 
 **User's preferred language**: English (INSTRUCT next agent to respond in English only)
 
 **what currently exists?** 
-A robust, highly complex full-stack React + FastAPI application. It features an async multi-agent architecture (6 specialized backend agents + an orchestrator) that processes live data, builds a knowledge graph, and runs tiered social media simulations. Recently, the app was optimized to reduce LLM costs by routing calls to different models based on complexity, and Real Social Media Comment Seeding was added to ground simulations in actual news/social data.
+A highly complex, stable full-stack React + FastAPI application. The frontend features a Cyberpunk dark theme with an Accuracy Dashboard. The backend coordinates an async multi-agent architecture with a 3-tier LLM routing strategy, GraphRAG entity/relationship extraction, universal domain classification (financial, political, sports, etc.), and a background APScheduler for scoring predictions. It handles live Indian and US market indices, Wikipedia/HN context fetching, and Google News RSS.
 
 **Last working item**: 
-- **Last item agent was working**: Implementing a comprehensive **UI Redesign** based on user-provided files ( and ). The agent just extracted and analyzed the files but did not start modifying the codebase.
-- **Status**: NOT STARTED
-- **Agent Testing Done**: N
-- **Which testing method agent to use?**: Frontend testing agent + screenshot tool (This is a massive UI/CSS overhaul).
-- **User Testing Done**: N
+    - Last item agent was working: Implementing . The previous agent just extracted the text file which contains logic for asynchronous scoring using Perplexity/News/Wiki (). The agent has NOT started writing the code yet.
+    - Status: NOT STARTED
+    - Agent Testing Done: N
+    - Which testing method agent to use? backend testing agent / manual testing by curl/python -c (Backend API changes for the new scoring model).
+    - User Testing Done: N
 
-**All Pending/In progress Issue list**:
-Issue 1: 🔴 Emergent LLM Key Budget Exhaustion (P0)
-   - Attempted fixes: The agent previously informed the user that the budget was exhausted, which caused some test failures in . The user needs to add balance to their Universal Key to ensure simulations complete successfully.
-   - Next debug checklist: Check if API calls return . If so, instruct the user to top up their Universal Key.
-   - Why fix this issue and what will be achieved with the fix?: Simulations and agent generation will fail if the LLM proxy rejects the calls.
-   - Status: USER VERIFICATION PENDING
-   - Is recurring issue? Y
-   - Should Test frontend/backend/both after fix?: Both
+**All Pending/In progress Issue list**:  
+None. Previous bugs related to prediction scoring (nifty 50 classification and yfinance empty DataFrames) were successfully fixed.
 
 **In progress Task List**:
-Task 1: 🟠 Implement SwarmSim UI Redesign (P0)
-   - Where to resume: Review the extracted HTML/TXT files from the last interaction. Apply the new visual design (glassmorphism, vibrant colors, layout, animations) to  and .
-   - What will be achieved with this?: Modernize the app's aesthetic to match the user's provided preview.
+Task 1: Implement  logic
+   - Where to resume: Read the extracted contents of  from the end of the conversation history. Implement the async non-financial scoring mechanism () and update  in  to use it.
+   - What will be achieved with this? Enhances the APScheduler to score non-financial (political, sports, etc.) predictions automatically using LLM-evaluated real-world news/Wikipedia context.
    - Status: NOT STARTED
-   - Should Test frontend/backend/both after fix?: Frontend
-   - Blocked on something: None
-   - *CRITICAL WARNING*: The provided text file snippet shows  and  usage. **DO NOT** convert the backend/frontend to GraphQL. SwarmSim uses REST ( + FastAPI). Extract and implement **ONLY** the UI/CSS/Layout changes from the user's design files, keeping the existing REST API logic intact.
+   - Should Test frontend/backend/both after fix? Backend
+   - Blocked on something: No
 
 **Upcoming and Future Tasks**
 Upcoming Tasks:
 - 🟡 Add Session history to resume previous simulations (P1)
 - 🟡 Implement Graph zoom/pan controls to the knowledge graph (P1)
+
 Future Tasks:
 - 🔵 Add Entity search/filter in the knowledge graph (P2)
 - 🔵 Add Progress percentage during long operations (P2)
+- 🔵 Refactor App.js (Split Monolith): Break down the ~3000 line  into separate component files (P2)
 - 🔵 Implement Agent memory persistence across sessions (P2)
 - ⚪ Add Custom agent creation, simulation templates, shareable links (P3)
-- ⚪ Refactor App.js (Split Monolith): Break down the ~2500 line  into separate component files (P2)
 
 **Completed work in this session**
-- Implemented 3-Tier LLM Model Routing (Sonnet 4 for premium, Haiku for fast, Gemini 2.5 Flash for bulk) (DONE)
-- Implemented 12-point Cost Reduction Spec (context compression, caching, progressive reports) (DONE)
-- Fixed  500 Error by ensuring agent IDs are generated (DONE)
-- Fixed PDF Report Distortion (prevented mid-word truncation, added array handling) (DONE)
-- Fixed UI layout issues (Entity Types legend hidden, World Context text overflow) (DONE)
-- Implemented Real Social Media Comment Seeding using Google News RSS (DONE)
+- GraphRAG Level 1 + Level 2 Upgrade implemented. (DONE)
+- Prediction Tracking System (APScheduler + Frontend Accuracy Dashboard) implemented. (DONE)
+- Graph Chunking & Multi-source pipeline implemented (Note: Chunking was subsequently disabled to prevent OOM errors, reverting to single-pass). (DONE)
+- Universal Prediction System (Domain Classification, dynamic archetypes, Wikipedia fetching) implemented. (DONE)
+- Fixed Prediction Scoring bugs for Indian Indices (Nifty 50, Sensex) in yfinance. (DONE)
+- Switched Intel and Graph agents from Sonnet to Haiku 4.5 to bypass 60s proxy timeouts and speed up the pipeline from 60s+ to ~33s. (DONE)
 
 **Earlier issues found/mentioned but not fixed**
-None.
+Issue 1: Graph Chunking causes OOM
+   - Debug checklist:  and  exist in  but are currently bypassed in  because running multiple concurrent LLMs causes the Kubernetes pod to run out of memory. 
+   - Why to solve this issue and what will be achieved with this? Allows processing of massive documents. Currently limited to single-pass extraction.
+   - Should Test frontend/backend/both after fix: Backend
+   - Is recurring issue? Y (Led to 5+ pod restarts)
 
 **Known issue recurrence from previous fork**
-- Issue recurrence in previous fork: LLM Budget Exhaustion.
-- Recurrence count: 2
-- Status: BLOCKED (Requires user action to add funds).
+  - Issue recurrence in previous fork: 
+    1. LLM Budget Exhaustion (). User had to top up balance.
+    2. 60s Proxy Timeout for Sonnet 4 / Gemini Flash on large prompts.
+    3. Pod Memory Limit Exceeded (OOM) during concurrent heavy Python scripts/LLM calls.
+  - Recurrence count: 3+
+  - Status: RESOLVED / MITIGATED (Agent switched heavy extraction tasks to Haiku 4.5, shrank prompt sizes, and disabled concurrent chunking).
+  - Note: **DO NOT** revert to Sonnet 4 for Graph Extraction or Intel Agent, and **DO NOT** re-enable  concurrency without strict memory management, or the pod will crash.
 
 **Code Architecture**
 
 
 **Key Technical Concepts**
-React, FastAPI, MongoDB, Background Tasks & Polling (bypasses 60s Kubernetes timeout), , ,  (PDF generation), Multi-agent orchestration, Tiered statistical cloning, Tiered LLM routing (Sonnet/Haiku/Gemini).
+React, FastAPI, APScheduler (Background scoring),  (Stock metrics with retry fallbacks), Multi-agent orchestration, Tiered LLM routing (Sonnet/Haiku/Gemini), GraphRAG context mapping, Universal Domain Classification.
 
 **key DB schema**
-- : 
-- : 
+  - : 
+  - : 
 
 **changes in tech stack**
--  (PyPDF2) heavily utilized for dynamic PDF report generation.
-- Switched from single model to 3-tier model strategy via Emergent integrations.
+  -  installed and running in the FastAPI lifecycle for background task scoring.
 
-**All files of reference**
-- : Core routing and API logic.
-- : Monolithic UI containing the entire frontend.
-- : Coordinates the specialized LLM agents.
-- : Latest backend/frontend testing report.
+**All files of reference** 
+- : Core backend file. Extensively updated with APScheduler, , , and Indian index fallbacks.
+- : Upgraded with GraphRAG L1+L2 prompts.
+- : Orchestrates the flow. Now skips graph generation if cached. Uses Haiku.
+- : Updated with Accuracy Dashboard, domain badges, and prediction outcome UI.
+- : Actively maintained product roadmap.
 
 **Areas that need refactoring**: 
--  has grown to over 2,500 lines. It desperately needs to be split into separate components (e.g., , , , ) before adding more massive features.
+ is nearly 3000 lines. High priority for future refactoring into components (, , , etc.).
 
 **key api endpoints**
--  
--  (NEW - fetches real news/comments)
 - 
 - 
-- 
--  (NEW)
 - 
 
 **Critical Info for New Agent**
-- **LLM Routing**: The backend uses three specific models via :  (Premium),  (Fast), and  (Bulk/Cheapest). Do not change these strings, as  or other variants failed.
-- **UI Redesign Trap**: The user provided a TXT file containing UI redesign code that uses GraphQL (, ). **DO NOT use the Apollo code**. SwarmSim is built on a REST API using Axios. Only apply the visual CSS/Tailwind structural changes from the design files.
-- **PDF Generation**: The  utility handles string encoding for . If you add new fields to the report, ensure they are passed through .
+- **OOM WARNING**: The pod has strictly limited memory. Do not run heavy concurrent  LLM calls (like multi-chunk graph extraction). The agent intentionally reverted  to single-pass extraction to stabilize the server.
+- **Timeout WARNING**: The LLM Proxy has a strict 60s timeout. Sonnet 4 and Gemini Flash were timing out on Graph Extraction. It is currently set to  with  and trimmed prompts to ensure it completes in ~15-20s. Leave this configuration as-is.
+- **Indian Indices**:  has been patched to retry multiple ticker variants for Indian indices (, , ) because it frequently returns empty DataFrames.
 
 **documents and test reports created in this job**
-- 
--  to 
+  - 
+  -  (GraphRAG testing)
+  -  (Prediction Tracking testing)
 
 **Last 10 User Messages and any pending HUMAN messages** 
-1. why is it costing so much
-2. Implement a tiered model strategy to reduce simulation costs by 70%...
-3. look at the txt and implement the same (SwarmSim_CostReduction_Complete.txt)
-4. look at the error msg (Failed to configure population 500 error)
-5. look at the report its all distorted and on the SS the entity type is not visible
-6. implement the text file (SwarmSim_RealSocialSeed.txt)
-7. lets implement these (SwarmSim_UI_Redesign_Preview.html, SwarmSim_UIRedesign_Emergent.txt) - **PENDING (NOT STARTED)**
+1. taking too long to fetch data (Resolved - agent switched Sonnet to Haiku)
+2. proceed (Resolved)
+3. System Review: Memory Limit exceeded... (Resolved - agent disabled concurrent chunking)
+4. System Review: Memory Limit exceeded... (Resolved)
+5. System Review: Memory Limit exceeded... (Resolved)
+6. work on txt (Uploaded: SwarmSim_UniversalPrediction.txt) (Done)
+7. Fix two bugs in prediction scoring causing UNKNOWN results... (Done)
+8. txt implement (Uploaded: SwarmSim_UniversalPredictionModel.txt) - **PENDING (Extract complete, implementation not started)**
 
 **Project Health Check:**
-Healthy (All logic works), but **Budget Blocked** (LLM budget exhaustion may cause 400 errors during generation steps).
+Healthy. Both Frontend and Backend compiled successfully. 
 
 **3rd Party Integrations** 
 - OpenAI/Anthropic/Gemini (via Emergent Integrations Proxy) — uses Emergent LLM Key.
-- Google News RSS () — No Key required.
+- xAI (Grok API) — requires User API Key.
 - yfinance — No Key required.
+- Wikipedia / Google News RSS — No Key required.
 
 **Testing status**
-- Testing agent used after significant changes: YES ().
-- Troubleshoot agent used after agent stuck in loop: NO.
-- Known regressions: None, though tests failed due to LLM budget exhaustion in the final iteration.
+  - Testing agent used after significant changes: YES (, )
+  - Troubleshoot agent used after agent stuck in loop: NO
+  - Test files created: None
+  - Known regressions: Graph chunking was implemented but reverted due to OOMs.
 
 **Credentials to test flow:**
-None required (Emergent Proxy used).
+None required. 
 
 **What agent forgot to execute**
-The agent extracted the UI redesign files but did not have the context/time to write the code. It accurately analyzed the files but left the actual UI redesign implementation to the next agent.
+The agent extracted  in the very last message but the context ended before any code was written. This must be the immediate next step.
 
 **Debugging checklist for current issue**
-    Issue: Implement UI Redesign Without Breaking REST
-    Frontend files to check:  and .
-    - Apply CSS variable changes, animations, and structural layout from the provided HTML/TXT files.
-    - Validate that  and  logic remains completely intact. DO NOT import or use .
-    - Re-test frontend flow using screenshot tool to verify the new aesthetic is applied correctly.</analysis>
+    Issue: Implement  logic
+    Backend files to check:
+    - : Update  and implement  (using the extracted code reference).
+    Database to check:
+    - : Ensure non-financial predictions get updated properly with scores and reasoning.</analysis>

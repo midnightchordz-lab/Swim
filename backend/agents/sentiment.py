@@ -93,3 +93,42 @@ def sentiment_label(text: str, threshold: float = 0.15) -> str:
     if valence < -threshold:
         return "negative"
     return "neutral"
+
+
+def score_text(text: str) -> dict:
+    """Return both numeric valence and categorical sentiment for shared callers."""
+    valence = sentiment_valence(text)
+    return {
+        "valence": valence,
+        "sentiment": "positive" if valence > 0.15 else "negative" if valence < -0.15 else "neutral",
+    }
+
+
+def score_text_valence(text: str) -> float:
+    """Compatibility wrapper for callers that only need the numeric score."""
+    return score_text(text)["valence"]
+
+
+def classify_sentiment(text: str) -> str:
+    """Compatibility wrapper for herd/critic checks."""
+    return score_text(text)["sentiment"]
+
+
+def aggregate_sentiment(texts: list) -> dict:
+    """Aggregate a list of texts into distribution and mean valence."""
+    scored = [score_text(text) for text in texts if text]
+    if not scored:
+        return {"positive": 0, "negative": 0, "neutral": 0, "mean_valence": 0.0, "total": 0}
+
+    total = len(scored)
+    counts = {"positive": 0, "negative": 0, "neutral": 0}
+    for item in scored:
+        counts[item["sentiment"]] += 1
+
+    return {
+        "positive": round(counts["positive"] / total * 100),
+        "negative": round(counts["negative"] / total * 100),
+        "neutral": round(counts["neutral"] / total * 100),
+        "mean_valence": round(sum(item["valence"] for item in scored) / total, 3),
+        "total": total,
+    }

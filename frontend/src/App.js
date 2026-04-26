@@ -19,6 +19,8 @@ import LandingOnboarding from "./components/LandingOnboarding";
 import ScenarioTemplates from "./components/ScenarioTemplates";
 import SimulationReplayTimeline from "./components/SimulationReplayTimeline";
 import GodViewInjectionPanel from "./components/GodViewInjectionPanel";
+import EnsembleForecastPanel from "./components/EnsembleForecastPanel";
+import EvidenceLedgerPanel from "./components/EvidenceLedgerPanel";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -2084,6 +2086,8 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
       </div>
 
       <PredictionQualityPanel quality={report.prediction_quality} />
+      <EnsembleForecastPanel ensemble={report.ensemble_forecast} />
+      <EvidenceLedgerPanel ledger={report.evidence_ledger} />
 
       {/* Live Stock Data */}
       {report.stock_data && report.stock_data.length > 0 && (
@@ -2271,6 +2275,8 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
 
         {/* Right Column */}
         <div className="space-y-4">
+          <EvidenceLedgerPanel ledger={report.evidence_ledger || []} />
+
           {/* Risk Factors */}
           {report.risk_factors?.length > 0 && (
             <div className="bg-panel border border-sw rounded-xl p-4">

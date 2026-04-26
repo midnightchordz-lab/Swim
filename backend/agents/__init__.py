@@ -1,4 +1,5 @@
 from .critic import check_herd, score_diversity, get_missing_personalities, check_report
+from .sentiment import score_text_valence, classify_sentiment, aggregate_sentiment
 from .belief_tracker import initialise_beliefs, update_beliefs, get_belief_summary
 from .network import assign_network_properties, get_visible_posts, get_network_stats
 from .emotional_contagion import (
@@ -13,6 +14,7 @@ from .population import (
 
 __all__ = [
     "check_herd", "score_diversity", "get_missing_personalities", "check_report",
+    "score_text_valence", "classify_sentiment", "aggregate_sentiment",
     "initialise_beliefs", "update_beliefs", "get_belief_summary",
     "assign_network_properties", "get_visible_posts", "get_network_stats",
     "initialise_emotions", "spread_emotions",

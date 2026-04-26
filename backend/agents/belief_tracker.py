@@ -1,15 +1,8 @@
-import re
+from .sentiment import score_text
 
-POSITIVE_WORDS = {"good","great","bullish","optimistic","support","agree","hope","better","win","positive","rally","growth","strong","confident","opportunity","recover","gain","rise","improve","benefit","success"}
-NEGATIVE_WORDS = {"bad","terrible","bearish","pessimistic","oppose","disagree","fear","worse","fail","negative","crash","crisis","weak","worried","decline","fall","drop","loss","danger","problem"}
 
 def _text_valence(text):
-    words = set(re.findall(r'\b\w+\b', text.lower()))
-    pos = len(words & POSITIVE_WORDS)
-    neg = len(words & NEGATIVE_WORDS)
-    total = pos + neg
-    if total == 0: return 0.0
-    return (pos - neg) / total
+    return score_text(text)["valence"]
 
 def initialise_beliefs(agents):
     for agent in agents:

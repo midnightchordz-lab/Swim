@@ -36,20 +36,36 @@ const steps = [
 const AuthLandingGate = ({ onSignIn }) => {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [mode, setMode] = useState("signin");
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const submit = (event) => {
+  const submit = async (event) => {
     event.preventDefault();
     const trimmedEmail = email.trim();
     if (!trimmedEmail || !trimmedEmail.includes("@")) {
       setError("Enter a valid email to continue.");
       return;
     }
-    onSignIn({
-      name: name.trim() || trimmedEmail.split("@")[0],
-      email: trimmedEmail,
-      signedInAt: new Date().toISOString(),
-    });
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      await onSignIn({
+        mode,
+        name: name.trim() || trimmedEmail.split("@")[0],
+        email: trimmedEmail,
+        password,
+      });
+    } catch (err) {
+      setError(err.response?.data?.detail || "Authentication failed.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -117,22 +133,39 @@ const AuthLandingGate = ({ onSignIn }) => {
             <section className="rounded-2xl border border-sw bg-panel p-5 md:p-6 shadow-[0_0_60px_rgba(0,245,196,0.08)]">
               <div className="mb-5">
                 <p className="text-xs uppercase tracking-wider text-sw3 mb-2">Secure access</p>
-                <h2 className="text-2xl font-bold text-sw mb-2">Sign in to start simulating</h2>
+                <h2 className="text-2xl font-bold text-sw mb-2">{mode === "signin" ? "Sign in to start simulating" : "Create your analyst account"}</h2>
                 <p className="text-sm text-sw2">
-                  This beta gate keeps the simulation workspace private. Full server-side auth can be added when user accounts are ready.
+                  Server-side accounts protect simulation sessions, reports, and agent chats behind a signed JWT.
                 </p>
               </div>
 
+              <div className="grid grid-cols-2 gap-2 mb-4">
+                {["signin", "signup"].map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => { setMode(item); setError(""); }}
+                    className={`rounded-lg px-3 py-2 text-xs font-semibold border transition-colors ${
+                      mode === item ? "border-sw-cyan bg-sw-cyan/10 text-sw-cyan" : "border-sw text-sw2"
+                    }`}
+                  >
+                    {item === "signin" ? "Sign In" : "Sign Up"}
+                  </button>
+                ))}
+              </div>
+
               <form onSubmit={submit} className="space-y-4">
-                <div>
-                  <label className="text-xs text-sw2 mb-1 block">Name</label>
-                  <input
-                    className="field"
-                    value={name}
-                    onChange={(event) => setName(event.target.value)}
-                    placeholder="Analyst name"
-                  />
-                </div>
+                {mode === "signup" && (
+                  <div>
+                    <label className="text-xs text-sw2 mb-1 block">Name</label>
+                    <input
+                      className="field"
+                      value={name}
+                      onChange={(event) => setName(event.target.value)}
+                      placeholder="Analyst name"
+                    />
+                  </div>
+                )}
                 <div>
                   <label className="text-xs text-sw2 mb-1 block">Email</label>
                   <input
@@ -144,9 +177,20 @@ const AuthLandingGate = ({ onSignIn }) => {
                     placeholder="you@example.com"
                   />
                 </div>
+                <div>
+                  <label className="text-xs text-sw2 mb-1 block">Password</label>
+                  <input
+                    data-testid="signin-password"
+                    className="field"
+                    type="password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    placeholder="At least 8 characters"
+                  />
+                </div>
                 {error && <p className="text-xs text-red-400">{error}</p>}
-                <button data-testid="signin-button" className="btn-primary" type="submit">
-                  Enter SwarmSim
+                <button data-testid="signin-button" className="btn-primary" type="submit" disabled={loading}>
+                  {loading ? "Authenticating..." : mode === "signin" ? "Enter SwarmSim" : "Create Account"}
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </form>

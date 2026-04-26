@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -22,6 +22,8 @@ import urllib.parse
 
 import base64
 import httpx
+import jwt
+from passlib.context import CryptContext
 
 # xAI/Grok SDK
 try:
@@ -73,6 +75,10 @@ logger = logging.getLogger(__name__)
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 TEXT_TRUNCATE_LIMIT = 12000
 TRANSCRIPT_CAP = 8000
+AUTH_SECRET = os.environ.get("AUTH_SECRET") or os.environ.get("JWT_SECRET") or "dev-only-change-me"
+AUTH_ALGORITHM = "HS256"
+AUTH_TOKEN_HOURS = int(os.environ.get("AUTH_TOKEN_HOURS", "168"))
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # Models
 class SessionCreate(BaseModel):
@@ -114,6 +120,115 @@ class SocialSeedRequest(BaseModel):
     include_reddit: bool = True
     include_twitter: bool = True
     max_comments: int = Field(default=30, ge=5, le=100)
+
+
+class AuthRequest(BaseModel):
+    email: str
+    password: str = Field(min_length=8)
+    name: Optional[str] = ""
+
+
+class AuthResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: Dict[str, Any]
+
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+JWT_SECRET = os.environ.get("JWT_SECRET", os.environ.get("SECRET_KEY", "dev-only-change-me"))
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRE_HOURS = int(os.environ.get("JWT_EXPIRE_HOURS", "168"))
+
+
+def public_user(user: dict) -> dict:
+    return {
+        "id": user["id"],
+        "email": user["email"],
+        "name": user.get("name") or user["email"].split("@")[0],
+    }
+
+
+def create_access_token(user: dict) -> str:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": user["id"],
+        "email": user["email"],
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(hours=JWT_EXPIRE_HOURS)).timestamp()),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+async def get_current_user(request: Request) -> dict:
+    auth_header = request.headers.get("Authorization", "")
+    scheme, _, token = auth_header.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Session expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user = getattr(request.state, "user", None)
+    if user and user.get("id") == payload.get("sub"):
+        return user
+    user = await db.users.find_one({"id": payload.get("sub")}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
+
+
+async def get_owned_session(session_id: str, request: Request, projection=None) -> dict:
+    user = await get_current_user(request)
+    query = {"id": session_id, "user_id": user["id"]}
+    session = await db.sessions.find_one(query, projection or {"_id": 0})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+
+@app.middleware("http")
+async def enforce_session_auth(request: Request, call_next):
+    """Protect all session APIs with JWT auth and per-user session ownership."""
+    path = request.url.path
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    if not path.startswith("/api/sessions"):
+        return await call_next(request)
+
+    auth_header = request.headers.get("Authorization", "")
+    scheme, _, token = auth_header.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        return JSONResponse(status_code=401, content={"detail": "Session expired"})
+    except jwt.InvalidTokenError:
+        return JSONResponse(status_code=401, content={"detail": "Invalid token"})
+
+    user_id = payload.get("sub")
+    user = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not user:
+        return JSONResponse(status_code=401, content={"detail": "User not found"})
+
+    # Exact /api/sessions is the session creation endpoint; ownership is assigned there.
+    parts = path.strip("/").split("/")
+    if len(parts) >= 3:
+        session_id = parts[2]
+        session = await db.sessions.find_one({"id": session_id}, {"_id": 0, "user_id": 1})
+        if session and not session.get("user_id"):
+            await db.sessions.update_one(
+                {"id": session_id},
+                {"$set": {"user_id": user_id, "updated_at": datetime.now(timezone.utc).isoformat()}},
+            )
+            session["user_id"] = user_id
+        if not session or session.get("user_id") != user_id:
+            return JSONResponse(status_code=404, content={"detail": "Session not found"})
+
+    return await call_next(request)
 
 # Prediction horizons
 PREDICTION_HORIZONS = [
@@ -1590,12 +1705,54 @@ async def health_check():
     }
 
 
+@api_router.post("/auth/signup", response_model=AuthResponse)
+async def signup(request: AuthRequest):
+    email = request.email.strip().lower()
+    existing = await db.users.find_one({"email": email})
+    if existing:
+        raise HTTPException(status_code=409, detail="An account with this email already exists")
+
+    user = {
+        "id": str(uuid.uuid4()),
+        "email": email,
+        "name": request.name.strip() or email.split("@")[0],
+        "password_hash": pwd_context.hash(request.password),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.users.insert_one(user)
+    return {
+        "access_token": create_access_token(user),
+        "user": public_user(user),
+    }
+
+
+@api_router.post("/auth/signin", response_model=AuthResponse)
+async def signin(request: AuthRequest):
+    email = request.email.strip().lower()
+    user = await db.users.find_one({"email": email})
+    if not user or not pwd_context.verify(request.password, user.get("password_hash", "")):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    return {
+        "access_token": create_access_token(user),
+        "user": public_user(user),
+    }
+
+
+@api_router.get("/auth/me")
+async def auth_me(request: Request):
+    user = await get_current_user(request)
+    return {"user": public_user(user)}
+
+
 @api_router.post("/sessions", response_model=SessionResponse)
-async def create_session():
+async def create_session(request: Request):
     """Create a new SwarmSim session"""
+    user = await get_current_user(request)
     session_id = str(uuid.uuid4())
     session = {
         "id": session_id,
+        "user_id": user["id"],
         "status": "created",
         "graph_json": None,
         "agents_json": None,
@@ -1613,25 +1770,21 @@ async def create_session():
 
 
 @api_router.get("/sessions/{session_id}")
-async def get_session(session_id: str):
+async def get_session(session_id: str, request: Request):
     """Get session status and metadata"""
-    session = await db.sessions.find_one({"id": session_id}, {"_id": 0})
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return session
+    return await get_owned_session(session_id, request, {"_id": 0})
 
 
 @api_router.post("/sessions/{session_id}/upload")
 async def upload_document(
     session_id: str,
+    request: Request,
     file: UploadFile = File(...),
     prediction_query: str = Form(...)
 ):
     """Upload document and extract knowledge graph via Graph Agent"""
     from services.agents import graph_agent as graph_agent_module
-    session = await db.sessions.find_one({"id": session_id})
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    await get_owned_session(session_id, request)
     
     # Parse document
     text, image_data = await parse_document(file)

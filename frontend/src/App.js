@@ -27,6 +27,14 @@ import ParticleBackground from "./components/ParticleBackground";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
+const setAuthToken = (token) => {
+  if (token) {
+    axios.defaults.headers.common.Authorization = `Bearer ${token}`;
+  } else {
+    delete axios.defaults.headers.common.Authorization;
+  }
+};
+
 // Prediction horizons
 const PREDICTION_HORIZONS = [
   "Next 24 hours",
@@ -2524,7 +2532,29 @@ function App() {
   const [error, setError] = useState(null);
   const [grokActive, setGrokActive] = useState(false);
 
-  const createNewSession = async () => {
+  useEffect(() => {
+    setAuthToken(user?.accessToken || null);
+  }, [user]);
+
+  const clearAuthenticatedSession = useCallback(() => {
+    window.localStorage.removeItem("swarmsim_user");
+    setAuthToken(null);
+    setUser(null);
+    setSessionId(null);
+    setCurrentStep(1);
+    setCompletedSteps([]);
+    setGraph(null);
+    setAgents(null);
+    setPosts(null);
+    setReport(null);
+    setError(null);
+  }, []);
+
+  const createNewSession = useCallback(async () => {
+    if (!user?.accessToken) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       // Check Grok availability
@@ -2544,11 +2574,15 @@ function App() {
       setReport(null);
       setError(null);
     } catch (err) {
+      if (err.response?.status === 401) {
+        clearAuthenticatedSession();
+        return;
+      }
       setError("Failed to create session. Please refresh the page.");
     } finally {
       setLoading(false);
     }
-  };
+  }, [clearAuthenticatedSession, user?.accessToken]);
 
   useEffect(() => {
     if (user) {
@@ -2556,25 +2590,19 @@ function App() {
     } else {
       setLoading(false);
     }
-  }, [user]);
+  }, [createNewSession, user]);
 
-  const handleSignIn = (profile) => {
-    window.localStorage.setItem("swarmsim_user", JSON.stringify(profile));
-    setUser(profile);
+  const handleSignIn = async ({ mode, name, email, password }) => {
+    const endpoint = mode === "signup" ? "/auth/signup" : "/auth/signin";
+    const response = await axios.post(`${API}${endpoint}`, { name, email, password });
+    const profile = response.data.user;
+    const accessToken = response.data.access_token;
+    const sessionUser = { ...profile, accessToken };
+    window.localStorage.setItem("swarmsim_user", JSON.stringify(sessionUser));
+    setUser(sessionUser);
   };
 
-  const handleSignOut = () => {
-    window.localStorage.removeItem("swarmsim_user");
-    setUser(null);
-    setSessionId(null);
-    setCurrentStep(1);
-    setCompletedSteps([]);
-    setGraph(null);
-    setAgents(null);
-    setPosts(null);
-    setReport(null);
-    setError(null);
-  };
+  const handleSignOut = clearAuthenticatedSession;
 
   const handleNewSimulation = () => {
     if (window.confirm("Start a new simulation? All current progress will be lost.")) {
@@ -2616,6 +2644,13 @@ function App() {
   const handlePostsUpdated = useCallback((updatedPosts) => {
     setPosts(updatedPosts);
   }, []);
+
+  useEffect(() => {
+    if (!user?.accessToken) return;
+    axios.get(`${API}/auth/me`).catch(() => {
+      handleSignOut();
+    });
+  }, [user?.accessToken, handleSignOut]);
 
   if (!user) {
     return <AuthLandingGate onSignIn={handleSignIn} />;

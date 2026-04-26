@@ -20,7 +20,6 @@ import hashlib
 import urllib.request
 import urllib.parse
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import base64
 import httpx
 import jwt
@@ -76,10 +75,6 @@ logger = logging.getLogger(__name__)
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 TEXT_TRUNCATE_LIMIT = 12000
 TRANSCRIPT_CAP = 8000
-AUTH_SECRET = os.environ.get("AUTH_SECRET") or os.environ.get("JWT_SECRET") or "dev-only-change-me"
-AUTH_ALGORITHM = "HS256"
-AUTH_TOKEN_HOURS = int(os.environ.get("AUTH_TOKEN_HOURS", "168"))
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # Models
 class SessionCreate(BaseModel):
@@ -134,11 +129,10 @@ class AuthResponse(BaseModel):
     token_type: str = "bearer"
     user: Dict[str, Any]
 
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 JWT_SECRET = os.environ.get("JWT_SECRET", os.environ.get("SECRET_KEY", "dev-only-change-me"))
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = int(os.environ.get("JWT_EXPIRE_HOURS", "168"))
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def public_user(user: dict) -> dict:

@@ -2,6 +2,7 @@ import React from "react";
 import { Shield, Clock, Database, AlertTriangle } from "lucide-react";
 
 const pct = (value) => `${Math.round((value || 0) * 100)}%`;
+const signedPct = (value) => `${value >= 0 ? "+" : ""}${Math.round((value || 0) * 100)}%`;
 
 const strengthStyles = {
   strong: "bg-emerald-500/15 border-emerald-500/40 text-sw-cyan",
@@ -16,6 +17,7 @@ const PredictionQualityPanel = ({ quality }) => {
   const freshness = quality.data_freshness || {};
   const interval = quality.confidence_interval || {};
   const strength = quality.evidence_strength || "limited";
+  const calibration = quality.calibration || {};
 
   return (
     <div data-testid="prediction-quality-panel" className="bg-panel border border-sw rounded-xl p-4">
@@ -46,6 +48,22 @@ const PredictionQualityPanel = ({ quality }) => {
         </div>
       </div>
 
+      {calibration.calibrated_confidence_score != null && (
+        <div className="mb-3 rounded-lg bg-sw3/30 border border-sw p-3">
+          <p className="text-[10px] text-sw3 uppercase tracking-wider mb-1">Confidence Calibration</p>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="mono text-sw2">Raw {pct(calibration.raw_confidence_score)}</span>
+            <span className="text-sw3">-></span>
+            <span className="mono text-sw">Calibrated {pct(calibration.calibrated_confidence_score)}</span>
+            <span className={`px-1.5 py-0.5 rounded ${
+              calibration.adjustment >= 0 ? "bg-emerald-500/15 text-sw-cyan" : "bg-amber-500/15 text-amber-400"
+            }`}>
+              {signedPct(calibration.adjustment)} adjustment
+            </span>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
         <div className="flex items-start gap-2 text-sw2">
           <Database className="w-3.5 h-3.5 mt-0.5 text-sw-cyan" />
@@ -60,6 +78,25 @@ const PredictionQualityPanel = ({ quality }) => {
           <span>{freshness.latest_input_at ? `Latest input: ${new Date(freshness.latest_input_at).toLocaleString()}` : "No timestamped live inputs available"}</span>
         </div>
       </div>
+
+      {quality.evidence_drivers?.length > 0 && (
+        <div className="mt-3">
+          <p className="text-[10px] text-sw3 uppercase tracking-wider mb-2">Evidence Drivers</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {quality.evidence_drivers.map((driver, idx) => (
+              <div key={idx} className="rounded-lg bg-sw3/30 border border-sw p-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-sw">{driver.name}</span>
+                  <span className={`text-[10px] mono ${String(driver.impact || "").startsWith("-") ? "text-red-400" : "text-sw-cyan"}`}>
+                    {driver.impact}
+                  </span>
+                </div>
+                <p className="text-[10px] text-sw3 mt-0.5">{driver.status}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {quality.caveats?.length > 0 && (
         <div className="mt-3 space-y-1">

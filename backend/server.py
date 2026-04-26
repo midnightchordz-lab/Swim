@@ -387,6 +387,35 @@ def build_report_quality_metadata(session: dict, posts: list, stock_data: list, 
         if item.get("fetched_at"):
             latest_inputs.append(item["fetched_at"])
 
+    evidence_drivers = [
+        {
+            "name": "Live intelligence brief",
+            "status": "present" if has_live_intel else "missing",
+            "impact": "+20%" if has_live_intel else "0%",
+        },
+        {
+            "name": "Simulation sample",
+            "status": f"{total_posts} posts",
+            "impact": f"+{round(min(0.20, total_posts / 500) * 100)}%",
+        },
+        {
+            "name": "Market data",
+            "status": f"{len(stock_data or [])} ticker(s)" if stock_data else "missing",
+            "impact": "+15%" if stock_data else "0%",
+        },
+        {
+            "name": "Real social calibration",
+            "status": "present" if has_real_sentiment else "missing",
+            "impact": "+10%" if has_real_sentiment else "0%",
+        },
+    ]
+    if fallback_rate:
+        evidence_drivers.append({
+            "name": "LLM fallback rate",
+            "status": f"{round(fallback_rate * 100)}%",
+            "impact": f"-{round(min(0.20, fallback_rate * 0.5) * 100)}%",
+        })
+
     return {
         "evidence_strength": evidence_strength,
         "evidence_score": round(evidence_score, 2),
@@ -408,8 +437,125 @@ def build_report_quality_metadata(session: dict, posts: list, stock_data: list, 
             "fallback_posts": fallback_posts,
             "fallback_rate": fallback_rate,
         },
+        "evidence_drivers": evidence_drivers,
         "caveats": caveats,
     }
+
+
+def normalize_percentage_landscape(landscape: dict) -> dict:
+    """Keep support/opposition/undecided percentages numeric and summing to 100."""
+    if not isinstance(landscape, dict):
+        return {}
+
+    fields = ["support_percentage", "opposition_percentage", "undecided_percentage"]
+    values = []
+    for field in fields:
+        try:
+            values.append(max(0.0, float(landscape.get(field, 0) or 0)))
+        except (TypeError, ValueError):
+            values.append(0.0)
+
+    total = sum(values)
+    if total <= 0:
+        normalized = [33, 33, 34]
+    else:
+        scaled = [round(value / total * 100) for value in values]
+        scaled[-1] += 100 - sum(scaled)
+        normalized = scaled
+
+    result = dict(landscape)
+    for field, value in zip(fields, normalized):
+        result[field] = int(value)
+    return result
+
+
+def normalize_alternative_scenarios(report: dict) -> None:
+    """Normalize scenario probabilities in-place while preserving LLM scenario text."""
+    scenarios = report.get("alternative_scenarios")
+    if not isinstance(scenarios, list) or not scenarios:
+        return
+
+    parsed = []
+    for scenario in scenarios:
+        if not isinstance(scenario, dict):
+            continue
+        try:
+            probability = float(scenario.get("probability", 0) or 0)
+        except (TypeError, ValueError):
+            probability = 0.0
+        parsed.append((scenario, max(0.0, probability)))
+
+    total = sum(probability for _, probability in parsed)
+    if total <= 0:
+        even = round(1 / len(parsed), 2) if parsed else 0
+        for scenario, _ in parsed:
+            scenario["probability"] = even
+        return
+
+    for scenario, probability in parsed:
+        scenario["probability"] = round(probability / total, 2)
+
+    if parsed:
+        drift = round(1.0 - sum(scenario["probability"] for scenario, _ in parsed), 2)
+        parsed[-1][0]["probability"] = round(parsed[-1][0]["probability"] + drift, 2)
+
+
+def update_quality_interval(report: dict) -> None:
+    """Refresh confidence band after any confidence calibration."""
+    prediction = report.get("prediction", {})
+    quality = report.get("prediction_quality", {})
+    if not isinstance(prediction, dict) or not isinstance(quality, dict):
+        return
+
+    confidence_score = prediction.get("confidence_score", 0.5) or 0.5
+    uncertainty = quality.get("uncertainty", 0.25) or 0.25
+    try:
+        confidence_score = float(confidence_score)
+        uncertainty = float(uncertainty)
+    except (TypeError, ValueError):
+        return
+
+    quality["confidence_interval"] = {
+        "low": round(max(0.0, confidence_score - uncertainty), 2),
+        "high": round(min(1.0, confidence_score + uncertainty), 2),
+    }
+
+
+def calibrate_report_confidence(report: dict) -> None:
+    """Temper LLM confidence based on evidence strength and simulation reliability."""
+    prediction = report.get("prediction", {})
+    quality = report.get("prediction_quality", {})
+    if not isinstance(prediction, dict) or not isinstance(quality, dict):
+        return
+
+    original = prediction.get("confidence_score", 0.5) or 0.5
+    try:
+        original = max(0.05, min(0.95, float(original)))
+    except (TypeError, ValueError):
+        original = 0.5
+
+    evidence_score = quality.get("evidence_score", 0.5) or 0.5
+    fallback_rate = quality.get("simulation_reliability", {}).get("fallback_rate", 0) or 0
+    scenario_count = len(report.get("alternative_scenarios") or [])
+    risk_count = len(report.get("risk_factors") or [])
+
+    calibrated = original
+    calibrated -= max(0.0, 0.45 - evidence_score) * 0.35
+    calibrated -= min(0.12, fallback_rate * 0.20)
+    calibrated += min(0.04, risk_count * 0.01)
+    calibrated += 0.03 if scenario_count >= 2 else -0.03
+    calibrated = round(max(0.05, min(0.9, calibrated)), 2)
+
+    prediction["raw_confidence_score"] = round(original, 2)
+    prediction["confidence_score"] = calibrated
+    prediction["confidence"] = "High" if calibrated >= 0.75 else "Medium" if calibrated >= 0.45 else "Low"
+    quality["calibration"] = {
+        "raw_confidence_score": round(original, 2),
+        "calibrated_confidence_score": calibrated,
+        "adjustment": round(calibrated - original, 2),
+        "method": "Evidence-weighted heuristic calibration",
+    }
+    update_quality_interval(report)
 
 
 # ─── Social Media Fetchers ────────────────────────────────────────────
@@ -2565,6 +2711,8 @@ Return JSON with ONLY these fields:
         }
     }
     report.update({k: v for k, v in phase2.items() if k != "key_factions"})
+    report["opinion_landscape"] = normalize_percentage_landscape(report.get("opinion_landscape", {}))
+    normalize_alternative_scenarios(report)
 
     # Attach live stock data to report for frontend + PDF
     if stock_data:
@@ -2576,6 +2724,7 @@ Return JSON with ONLY these fields:
         stock_data=stock_data,
         report=report,
     )
+    calibrate_report_confidence(report)
 
     # Add real vs simulated sentiment comparison if social seed exists
     real_sentiment = session.get("social_seed_sentiment")

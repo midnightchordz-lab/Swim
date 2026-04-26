@@ -1,29 +1,11 @@
 import math
-import re
 import logging
+from .sentiment import classify_sentiment
 
 logger = logging.getLogger(__name__)
 
-POSITIVE_WORDS = {
-    "good","great","excellent","amazing","bullish","optimistic","support",
-    "agree","hope","better","win","positive","rally","growth","strong",
-    "confident","opportunity","recover","gain","up","rise","improve",
-    "promising","benefit","success","profit","buy","long","boom"
-}
-NEGATIVE_WORDS = {
-    "bad","terrible","awful","bearish","pessimistic","oppose","disagree",
-    "fear","worse","fail","negative","crash","crisis","weak","worried",
-    "concern","risk","decline","fall","drop","loss","sell","short",
-    "bust","collapse","warning","danger","threat","problem","disaster"
-}
-
 def _score_sentiment(text):
-    words = set(re.findall(r'\b\w+\b', text.lower()))
-    pos = len(words & POSITIVE_WORDS)
-    neg = len(words & NEGATIVE_WORDS)
-    if pos > neg: return "positive"
-    elif neg > pos: return "negative"
-    return "neutral"
+    return classify_sentiment(text)
 
 def check_herd(posts):
     if not posts:

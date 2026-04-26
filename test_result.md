@@ -101,3 +101,49 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: "Import/build latest GitHub main branch from midnightchordz-lab/Swim and run existing SwarmSim app with private-beta sign-in landing, server-side auth endpoints, evidence ledger, ensemble forecast, scenario templates, replay timeline, and god-view injection UI. Verify /api/auth/me returns 401 Authentication required, frontend no longer serves static/js/main.4efc86c3.js, and first page shows private-beta sign-in landing."
+backend:
+  - task: "Import latest GitHub main backend and verify auth endpoint"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Downloaded latest main archive from midnightchordz-lab/Swim, overlaid backend while preserving backend/.env, fixed missing AsyncIOScheduler import required for backend startup, installed requirements, and restarted supervisor services. Need testing agent to verify GET /api/auth/me returns 401 with detail Authentication required and not 404."
+      - working: true
+        agent: "testing"
+        comment: "Backend testing completed successfully. GET /api/auth/me returns HTTP 401 with JSON detail 'Authentication required' as expected (not 404). Service health check passed - backend running on https://predict.preview.emergentagent.com/api with status 'ok'. Auth endpoint properly configured and working correctly."
+frontend:
+  - task: "Import latest GitHub main frontend and verify private-beta auth landing"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/App.js, frontend/src/components/AuthLandingGate.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Downloaded latest main archive from midnightchordz-lab/Swim, overlaid frontend while preserving frontend/.env, installed dependencies with yarn, and restarted frontend. Need frontend verification that the initial page is the private-beta sign-in landing and no static/js/main.4efc86c3.js bundle is served."
+metadata:
+  created_by: "main_agent"
+  version: "1.0"
+  test_sequence: 2
+  run_ui: true
+test_plan:
+  current_focus:
+    - "Import latest GitHub main backend and verify auth endpoint"
+    - "Import latest GitHub main frontend and verify private-beta auth landing"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+agent_communication:
+  - agent: "main"
+    message: "Latest main archive was imported via GitHub tarball, not git write operations. Protected .git, .emergent, backend/.env, frontend/.env, and test_result.md were preserved. Services restarted and are running. Backend tester should verify /api/auth/me status/body. Frontend tester should verify private-beta sign-in landing and absence of old main.4efc86c3.js bundle."
+  - agent: "testing"
+    message: "Backend testing completed successfully. Auth endpoint verification passed - GET /api/auth/me returns HTTP 401 with JSON detail 'Authentication required' (not 404). Service health check confirmed backend is running properly on https://predict.preview.emergentagent.com/api. The imported latest main backend is working correctly."

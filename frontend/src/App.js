@@ -34,6 +34,8 @@ const setAuthToken = (token) => {
     delete axios.defaults.headers.common.Authorization;
   }
 };
+const AUTH_STORAGE_KEY = "predicta_user";
+const LEGACY_AUTH_STORAGE_KEY = "swarmsim_user";
 
 // Prediction horizons
 const PREDICTION_HORIZONS = [
@@ -192,8 +194,8 @@ const Header = ({ onNewSimulation, hasSession, grokActive, user, onSignOut, onSh
         </svg>
       </div>
       <div>
-        <div className="logo-name">SwarmSim</div>
-        <div className="logo-tagline">Swarm Intelligence Engine</div>
+        <div className="logo-name">Predicta</div>
+        <div className="logo-tagline">Evidence-Aware Prediction Engine</div>
       </div>
     </div>
     <div style={{display:'flex',gap:'12px',alignItems:'center'}}>
@@ -2841,8 +2843,13 @@ const PredictionOutcomeBadge = ({ sessionId }) => {
 function App() {
   const [user, setUser] = useState(() => {
     try {
-      const stored = window.localStorage.getItem("swarmsim_user");
-      return stored ? JSON.parse(stored) : null;
+      const stored = window.localStorage.getItem(AUTH_STORAGE_KEY);
+      if (stored) return JSON.parse(stored);
+      const legacy = window.localStorage.getItem(LEGACY_AUTH_STORAGE_KEY);
+      if (!legacy) return null;
+      window.localStorage.setItem(AUTH_STORAGE_KEY, legacy);
+      window.localStorage.removeItem(LEGACY_AUTH_STORAGE_KEY);
+      return JSON.parse(legacy);
     } catch (error) {
       return null;
     }
@@ -2876,7 +2883,8 @@ function App() {
   }, [user]);
 
   const clearAuthenticatedSession = useCallback(() => {
-    window.localStorage.removeItem("swarmsim_user");
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    window.localStorage.removeItem(LEGACY_AUTH_STORAGE_KEY);
     setAuthToken(null);
     setUser(null);
     setSessionId(null);
@@ -2937,7 +2945,8 @@ function App() {
     const profile = response.data.user;
     const accessToken = response.data.access_token;
     const sessionUser = { ...profile, accessToken };
-    window.localStorage.setItem("swarmsim_user", JSON.stringify(sessionUser));
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(sessionUser));
+    window.localStorage.removeItem(LEGACY_AUTH_STORAGE_KEY);
     setUser(sessionUser);
   };
 
@@ -3014,7 +3023,7 @@ function App() {
                 </svg>
               </div>
             </div>
-            <h2 className="text-xl font-bold mb-2" style={{color:'var(--text)',fontFamily:'var(--display)'}}>Initializing SwarmSim</h2>
+            <h2 className="text-xl font-bold mb-2" style={{color:'var(--text)',fontFamily:'var(--display)'}}>Initializing Predicta</h2>
             <p className="text-sm" style={{color:'var(--text2)'}}>Preparing your prediction engine...</p>
             <div className="mt-6 flex justify-center gap-1">
               {[0, 1, 2].map((i) => (

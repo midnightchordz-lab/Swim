@@ -80,8 +80,8 @@ const AuthLandingGate = ({ onSignIn }) => {
               <Sparkles className="w-4 h-4 text-sw-cyan" />
             </div>
             <div>
-              <div className="logo-name">SwarmSim</div>
-              <div className="logo-tagline">Evidence-Aware Swarm Intelligence</div>
+              <div className="logo-name">Predicta</div>
+              <div className="logo-tagline">Evidence-Aware Prediction Lab</div>
             </div>
           </div>
           <span className="badge-live">Private Beta</span>
@@ -133,7 +133,7 @@ const AuthLandingGate = ({ onSignIn }) => {
             <section className="rounded-2xl border border-sw bg-panel p-5 md:p-6 shadow-[0_0_60px_rgba(0,245,196,0.08)]">
               <div className="mb-5">
                 <p className="text-xs uppercase tracking-wider text-sw3 mb-2">Secure access</p>
-                <h2 className="text-2xl font-bold text-sw mb-2">{mode === "signin" ? "Sign in to start simulating" : "Create your analyst account"}</h2>
+                <h2 className="text-2xl font-bold text-sw mb-2">{mode === "signin" ? "Sign in to start predicting" : "Create your analyst account"}</h2>
                 <p className="text-sm text-sw2">
                   Server-side accounts protect simulation sessions, reports, and agent chats behind a signed JWT.
                 </p>
@@ -190,7 +190,7 @@ const AuthLandingGate = ({ onSignIn }) => {
                 </div>
                 {error && <p className="text-xs text-red-400">{error}</p>}
                 <button data-testid="signin-button" className="btn-primary" type="submit" disabled={loading}>
-                  {loading ? "Authenticating..." : mode === "signin" ? "Enter SwarmSim" : "Create Account"}
+                  {loading ? "Authenticating..." : mode === "signin" ? "Enter Predicta" : "Create Account"}
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </form>
@@ -198,7 +198,7 @@ const AuthLandingGate = ({ onSignIn }) => {
               <div className="mt-5 rounded-xl bg-sw3/40 border border-sw p-3">
                 <p className="text-[10px] uppercase tracking-wider text-sw3 mb-1">Why this beats generic swarm demos</p>
                 <p className="text-xs text-sw2 leading-relaxed">
-                  SwarmSim does not stop at a simulated answer. It shows source grounding, uncertainty, ensemble stability, and how the world changes when you inject new events.
+                  Predicta does not stop at a simulated answer. It shows source grounding, uncertainty, ensemble stability, and how the world changes when you inject new events.
                 </p>
               </div>
             </section>

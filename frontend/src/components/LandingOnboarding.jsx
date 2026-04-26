@@ -15,7 +15,7 @@ const LandingOnboarding = ({ onStart }) => (
       <div>
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs mono mb-4" style={{background:'var(--cyan-dim)',color:'var(--cyan)',border:'1px solid var(--border-bright)'}}>
           <Sparkles className="w-3.5 h-3.5" />
-          UNIVERSAL SWARM INTELLIGENCE ENGINE
+          PREDICTA DECISION INTELLIGENCE ENGINE
         </div>
         <h1 className="text-4xl md:text-5xl font-extrabold mb-4" style={{fontFamily:'var(--display)',color:'var(--text)'}}>
           Predict Anything

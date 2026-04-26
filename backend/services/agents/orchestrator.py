@@ -1,4 +1,4 @@
-"""Orchestrator - Manages the full SwarmSim pipeline, coordinating 6 specialist agents."""
+"""Orchestrator - Manages the full Predicta pipeline, coordinating 6 specialist agents."""
 import json
 import logging
 from datetime import datetime, timezone

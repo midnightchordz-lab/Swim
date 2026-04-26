@@ -1,7 +1,7 @@
-# SwarmSim - Product Requirements Document
+# Predicta - Product Requirements Document
 
 ## Original Problem Statement
-Build **SwarmSim**, a Swarm Intelligence Prediction Engine. Users run AI agent simulations to predict outcomes on any topic.
+Build **Predicta**, an evidence-aware prediction engine. Users run AI agent simulations to predict outcomes on any topic.
 
 ## Architecture
 - Frontend: React + Tailwind + Shadcn/UI | Backend: FastAPI + MongoDB + APScheduler

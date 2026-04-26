@@ -1731,8 +1731,8 @@ const SimulationView = ({ sessionId, agents, onComplete, onPostsUpdated }) => {
           addLog("Simulation error", "error");
           clearInterval(interval);
         }
-      } catch (err) {
-        console.error("Polling error:", err);
+      } catch {
+        // Transient polling failures are expected during long simulations; retry on next tick.
       }
     }, 2500);
 
@@ -2635,8 +2635,8 @@ const AccuracyDashboard = ({ data, onClose }) => {
           { val: data.total_predictions, lab: 'Total Predictions', color: 'var(--text)' },
           { val: data.total_correct, lab: 'Correct Calls', color: 'var(--cyan)' },
           { val: data.pending, lab: 'Awaiting Outcome', color: '#eab308' },
-        ].map((s, i) => (
-          <div key={i} data-testid={`accuracy-stat-${i}`} className="bg-panel border border-sw rounded-xl p-4 text-center">
+        ].map((s) => (
+          <div key={s.lab} data-testid={`accuracy-stat-${s.lab.toLowerCase().replace(/\s+/g, '-')}`} className="bg-panel border border-sw rounded-xl p-4 text-center">
             <div style={{fontFamily:'var(--mono)',fontSize:'26px',fontWeight:'700',color:s.color}}>{s.val}</div>
             <div className="text-[10px] mt-1 uppercase tracking-wider" style={{color:'var(--text3)'}}>{s.lab}</div>
           </div>
@@ -2689,8 +2689,8 @@ const AccuracyDashboard = ({ data, onClose }) => {
               Calibration — Predicted vs Actual (%)
             </div>
             <div className="text-[10px] italic mb-2" style={{color:'var(--text3)'}}>Perfect = diagonal. Above = overconfident.</div>
-            {data.calibration.map((row, i) => (
-              <div key={i} className="flex items-center gap-2 mb-1.5">
+            {data.calibration.map((row) => (
+              <div key={row.bucket} className="flex items-center gap-2 mb-1.5">
                 <div style={{width:'50px',fontSize:'10px',color:'var(--text3)',fontFamily:'var(--mono)'}}>{row.bucket}</div>
                 <div className="flex-1 relative h-4 rounded" style={{background:'rgba(255,255,255,0.03)'}}>
                   <div className="absolute inset-0 rounded" style={{width:`${row.predicted_pct}%`,background:'rgba(255,255,255,0.06)'}} />
@@ -2709,7 +2709,7 @@ const AccuracyDashboard = ({ data, onClose }) => {
               Top Predicting Agents
             </div>
             {data.top_agents.slice(0, 5).map((agent, i) => (
-              <div key={i} className="flex items-center gap-2 mb-2">
+              <div key={`${agent.agent_id || agent.agent_name}-${agent.personality_type || i}`} className="flex items-center gap-2 mb-2">
                 <div style={{fontFamily:'var(--mono)',fontSize:'10px',color:'var(--text3)',width:'16px'}}>{i + 1}</div>
                 <div className="flex-1">
                   <div className="text-xs font-semibold" style={{color:'var(--text)'}}>{agent.agent_name}</div>
@@ -2735,7 +2735,7 @@ const AccuracyDashboard = ({ data, onClose }) => {
             const actLabel = typeLabels[rec.actual_direction] || (rec.actual_direction || 'pending');
             const statusColor = rec.direction_correct ? 'var(--cyan)' : rec.status === 'pending' ? '#eab308' : '#ef4444';
             return (
-              <div key={i} className="flex items-center gap-3 px-4 py-2.5 border-b border-sw last:border-b-0">
+              <div key={rec.id || `${rec.topic || rec.domain}-${rec.created_at || i}`} className="flex items-center gap-3 px-4 py-2.5 border-b border-sw last:border-b-0">
                 <div className="w-2 h-2 rounded-full flex-shrink-0" style={{background: statusColor}} />
                 <div className="flex-1 text-xs truncate" style={{color:'var(--text)'}}>{rec.topic || rec.domain?.replace('_',' ')}</div>
                 <div className="text-[10px] flex-shrink-0" style={{
@@ -2865,8 +2865,9 @@ function App() {
       const res = await axios.get(`${API}/predictions/accuracy`);
       setAccuracyData(res.data);
       setShowAccuracy(true);
-    } catch (e) {
-      console.error("Accuracy load failed:", e);
+    } catch {
+      setAccuracyData(null);
+      setShowAccuracy(false);
     }
   };
 

@@ -12,6 +12,7 @@ import {
   AreaChart, Area, XAxis, YAxis, Tooltip as ReTooltip,
   ResponsiveContainer, CartesianGrid,
 } from "recharts";
+import PredictionQualityPanel from "./components/PredictionQualityPanel";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -2034,6 +2035,8 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
           </div>
         )}
       </div>
+
+      <PredictionQualityPanel quality={report.prediction_quality} />
 
       {/* Live Stock Data */}
       {report.stock_data && report.stock_data.length > 0 && (

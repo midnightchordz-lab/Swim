@@ -11,6 +11,7 @@ from services.agents import (
     critic_agent,
     report_agent,
 )
+from services.topic import detect_topic_category
 
 logger = logging.getLogger(__name__)
 
@@ -100,8 +101,6 @@ async def run_agent_generation_pipeline(session_id: str, num_agents: int,
     data_mode = session.get("data_mode", "upload")
     topic = session.get("topic", "")
 
-    # Import detect function
-    from server import detect_topic_category
     topic_category = detect_topic_category(topic or query)
 
     intel_context = ""

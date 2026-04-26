@@ -12,6 +12,7 @@ from services.agents import (
     report_agent,
 )
 from services.topic import detect_topic_category
+from services.agents.graph_agent import ensure_indices
 
 logger = logging.getLogger(__name__)
 
@@ -19,16 +20,17 @@ logger = logging.getLogger(__name__)
 async def run_live_intel_pipeline(session_id: str, topic: str, horizon: str,
                                   prediction_query: str, web_context: str,
                                   yahoo_headlines: str, financial_context: str,
-                                  financial_data: dict, call_fns: dict, db):
+                                  financial_data: dict, call_fns: dict, db,
+                                  skip_graph: bool = False):
     """Run the Intel + Graph pipeline for live intelligence mode.
-    Steps: Intel Agent (premium) -> Critic check (fast) -> Graph Agent (premium)"""
+    Steps: Intel Agent (premium) -> Critic check (fast) -> Graph Agent (premium, skippable)"""
 
     call_premium = call_fns["premium"]
     call_fast = call_fns["fast"]
 
     state = {"pipeline_status": "intel"}
 
-    # Step 1: Intel Agent generates brief (PREMIUM — deep reasoning)
+    # Step 1: Intel Agent generates brief (FAST — Haiku for speed, sufficient for structured analysis)
     logger.info(f"[Orchestrator] Step 1: Intel Agent for session {session_id}")
     await db.sessions.update_one(
         {"id": session_id},
@@ -38,7 +40,7 @@ async def run_live_intel_pipeline(session_id: str, topic: str, horizon: str,
     intel_brief = await intel_agent.run(
         topic, horizon, prediction_query,
         web_context, yahoo_headlines, financial_context,
-        call_premium
+        call_fast
     )
     state["intel_brief"] = intel_brief
 
@@ -70,16 +72,36 @@ async def run_live_intel_pipeline(session_id: str, topic: str, horizon: str,
     if financial_data and financial_data.get("has_data"):
         intel_brief["verified_market_data"] = financial_data["data"]
 
-    # Step 2: Graph Agent extracts knowledge graph (PREMIUM — structured extraction)
-    logger.info(f"[Orchestrator] Step 2: Graph Agent for session {session_id}")
-    await db.sessions.update_one(
-        {"id": session_id},
-        {"$set": {"live_progress": "Extracting knowledge graph..."}}
-    )
+    # Step 2: Graph Agent — single-pass extraction (Haiku for speed)
+    if not skip_graph:
+        call_graph = call_fns.get("fast", call_premium)
+        logger.info(f"[Orchestrator] Step 2: Graph Agent for session {session_id}")
 
-    graph = await graph_agent.run(intel_brief, prediction_query, call_premium)
-    state["graph"] = graph
-    state["pipeline_status"] = "graph_ready"
+        async def progress_fn(msg):
+            await db.sessions.update_one(
+                {"id": session_id},
+                {"$set": {"live_progress": msg}}
+            )
+
+        graph = await graph_agent.run(
+            intel_brief, prediction_query, call_graph,
+            progress_fn=progress_fn
+        )
+        state["graph"] = graph
+        state["pipeline_status"] = "graph_ready"
+
+        # Store graph stats
+        await db.sessions.update_one(
+            {"id": session_id},
+            {"$set": {
+                "graph_entity_count": graph.get("entity_count", len(graph.get("entities", []))),
+                "graph_rel_count": graph.get("relationship_count", len(graph.get("relationships", []))),
+                "graph_themes": graph.get("themes", []),
+            }}
+        )
+    else:
+        logger.info(f"[Orchestrator] Step 2: Skipped (using cached graph) for session {session_id}")
+        state["pipeline_status"] = "graph_ready"
 
     return state
 
@@ -96,7 +118,7 @@ async def run_agent_generation_pipeline(session_id: str, num_agents: int,
     if not session:
         return None
 
-    graph = json.loads(session["graph_json"])
+    graph = ensure_indices(json.loads(session["graph_json"]))
     query = session["prediction_query"]
     data_mode = session.get("data_mode", "upload")
     topic = session.get("topic", "")
@@ -114,11 +136,11 @@ async def run_agent_generation_pipeline(session_id: str, num_agents: int,
     if social_context:
         intel_context += social_context
 
-    # Step 3: Persona Agent generates agents (PREMIUM — creative persona generation)
+    # Step 3: Persona Agent generates agents (FAST — Haiku for speed)
     logger.info(f"[Orchestrator] Step 3: Persona Agent ({num_agents} agents)")
     agents = await persona_agent.run(
         graph, query, num_agents, topic_category, data_mode, intel_context,
-        call_premium
+        call_fast
     )
 
     # Step 3b: Critic scores diversity (pure Python — no LLM)
@@ -146,7 +168,7 @@ async def run_simulation_pipeline(session_id: str, num_rounds: int,
         return
 
     agents = json.loads(session["agents_json"])
-    graph = json.loads(session["graph_json"])
+    graph = ensure_indices(json.loads(session["graph_json"]))
     query = session["prediction_query"]
 
     # Step 4: Simulation Director runs rounds (FLASH — bulk generation)
@@ -183,7 +205,7 @@ async def run_report_pipeline(session_id: str, call_fns: dict, db) -> dict:
         return None
 
     agents = json.loads(session["agents_json"])
-    graph = json.loads(session["graph_json"])
+    graph = ensure_indices(json.loads(session["graph_json"]))
     query = session["prediction_query"]
     total_rounds = session.get("total_rounds", 5)
 

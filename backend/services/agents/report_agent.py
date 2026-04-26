@@ -1,6 +1,7 @@
-"""Report Agent - Generates structured prediction reports with temporal narrative context."""
+"""Report Agent - Generates structured prediction reports with GraphRAG-enhanced context."""
 import json
 import logging
+from services.agents.graph_agent import generate_report_context
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +32,15 @@ async def run(agents: list, graph: dict, posts: list, prediction_query: str,
     # Build narrative arc
     narrative_arc = "\n".join(round_narratives) if round_narratives else "No round narratives available."
 
+    # GraphRAG-enhanced report context
+    graph_report_context = generate_report_context(graph)
+
     system_prompt = """You are a senior analyst who just observed a multi-agent social simulation. Produce a rigorous prediction report. Respond ONLY with valid JSON, no markdown fences."""
 
     user_prompt = f"""Prediction Question: {prediction_query}
-World Summary: {graph.get('summary', '')[:1500]}
-Themes: {', '.join(graph.get('themes', []))}
+
+{graph_report_context}
+
 Agents ({len(agents)} total):
 {agents_summary}
 

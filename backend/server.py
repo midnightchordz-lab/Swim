@@ -20,6 +20,7 @@ import hashlib
 import urllib.request
 import urllib.parse
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import base64
 import httpx
 import jwt
@@ -239,6 +240,128 @@ PREDICTION_HORIZONS = [
     "Next 6 months",
     "Long term (1+ year)"
 ]
+
+# ── UNIVERSAL DOMAIN CLASSIFIER (16 domains) ──────────────────────────────────
+UNIVERSAL_DOMAINS = {
+    "financial": "Stock markets, indices, commodities, forex, ETFs",
+    "crypto": "Bitcoin, Ethereum, altcoins, DeFi, blockchain",
+    "political": "Elections, parties, politicians, government policy",
+    "sports": "Cricket, football, tennis, Olympics, tournaments",
+    "technology": "AI, product launches, startups, Big Tech, software",
+    "entertainment": "Movies, OTT, music, awards, celebrities, box office",
+    "geopolitical": "Wars, conflicts, sanctions, diplomacy, treaties",
+    "business": "M&A, earnings, IPO, startup funding, corporate strategy",
+    "science": "Research, clinical trials, space, climate science",
+    "social": "Viral trends, controversies, cultural shifts, movements",
+    "legal": "Court cases, regulatory decisions, laws, compliance",
+    "macro": "GDP, inflation, central banks, trade policy",
+    "real_estate": "Property markets, housing prices, commercial real estate",
+    "health": "Pandemics, drug approvals, health policy, medical breakthroughs",
+    "general": "Any topic that does not fit the above categories",
+}
+
+KEYWORD_MAP = {
+    "financial": ["nifty","nifty50","nifty 50","nifty50","^nsei",
+                  "sensex","^bsesn","bsesn",
+                  "banknifty","bank nifty","niftybank",
+                  "nifty midcap","nifty smallcap",
+                  "nifty it","nifty pharma","nifty auto",
+                  "midcap","smallcap","nse index","bse index","dalal street",
+                  "reliance","tcs","infosys","hdfc","icici","sbi","wipro",
+                  "itc","bajaj","adani","kotak","axis bank",
+                  "sp500","s&p 500","s&p500","dow jones","nasdaq",
+                  "apple stock","microsoft stock","tesla stock","nvidia stock",
+                  "stock","share price","share","bse","nse","equity","market cap","market",
+                  "index","ipo","mutual fund","etf","futures","options",
+                  "sebi","rbi rate","repo rate","fed rate",
+                  "earnings","revenue","profit","quarterly results","trading"],
+    "crypto": ["bitcoin","btc","ethereum","eth","crypto","defi","nft","blockchain",
+               "solana","binance","coinbase","altcoin","web3","token"],
+    "political": ["election","vote","party","bjp","congress","tmc","aap","parliament",
+                  "minister","president","governor","policy","bill","referendum","poll",
+                  "candidate","constituency","campaign","democrat","republican"],
+    "sports": ["cricket","football","ipl","test match","world cup","champions league",
+               "tennis","olympics","nba","nfl","formula 1","f1","tournament","league",
+               "match","player","team","coach","stadium","wicket","goal","innings"],
+    "technology": ["ai","gpt","gemini","claude","llm","startup","launch","product",
+                   "apple","google","microsoft","meta","openai","tesla","app","software",
+                   "iphone","android","chip","semiconductor"],
+    "entertainment": ["movie","film","ott","netflix","amazon prime","disney","bollywood",
+                      "hollywood","actor","director","box office","award","oscar","grammy",
+                      "album","song","celebrity","web series","trailer"],
+    "geopolitical": ["war","conflict","military","nato","un","sanctions","treaty","invasion",
+                     "diplomacy","missile","nuclear","ceasefire","alliance",
+                     "iran","russia","china","taiwan","ukraine","israel","palestine"],
+    "business": ["merger","acquisition","deal","funding","series","valuation",
+                 "unicorn","bankruptcy","layoff","ceo","board","quarterly"],
+    "science": ["research","study","paper","trial","vaccine","drug","nasa","space",
+                "climate","discovery","experiment","genome"],
+    "social": ["viral","trend","meme","controversy","cancel","protest","movement",
+               "hashtag","influencer","backlash","outrage","petition"],
+    "legal": ["court","judge","verdict","lawsuit","case","hearing","appeal",
+              "supreme court","high court","ruling","conviction","acquittal"],
+    "macro": ["gdp","inflation","interest rate","fed","rbi","ecb","cpi",
+              "unemployment","trade deficit","recession","growth forecast"],
+    "health": ["covid","pandemic","vaccine","disease","outbreak","fda","drug approval",
+               "hospital","treatment","clinical","health policy"],
+    "real_estate": ["property","housing","real estate","apartment","commercial","reit",
+                    "builder","developer","construction","mortgage"],
+}
+
+
+def build_prediction_question(user_question: str, topic: str, horizon: str) -> str:
+    """Use user's question if provided. Only auto-generate if blank."""
+    if user_question and len(user_question.strip()) > 10:
+        return user_question.strip()
+
+    t = topic.lower()
+    if any(w in t for w in ["nifty","sensex","stock","price","btc","bitcoin","crypto","share"]):
+        return f"Where is {topic} headed in the {horizon}?"
+    elif any(w in t for w in ["election","vote","win","party","bjp","congress"]):
+        return f"What will the outcome of the {topic} be?"
+    elif any(w in t for w in ["match","cricket","ipl","final","tournament","cup"]):
+        return f"What will happen in {topic}?"
+    else:
+        return f"What will happen with {topic} in the {horizon}?"
+
+
+async def classify_topic(topic: str) -> dict:
+    """Classify any topic into one of 16 universal domains."""
+    topic_lower = topic.lower()
+
+    for domain, keywords in KEYWORD_MAP.items():
+        if any(kw in topic_lower for kw in keywords):
+            logger.info(f"[Classify] '{topic[:40]}' -> {domain} (keyword)")
+            return {"domain": domain, "confidence": 0.9, "method": "keyword"}
+
+    # LLM fallback for ambiguous topics
+    try:
+        domains_str = ", ".join(UNIVERSAL_DOMAINS.keys())
+        response = await call_claude_fast(
+            "You classify prediction topics into domains. Return ONLY JSON.",
+            f'Topic: "{topic}"\nDomains: {domains_str}\nReturn: {{"domain":"name","confidence":0.0-1.0}}',
+            max_tokens=60
+        )
+        from services.agents.common import clean_json
+        result = json.loads(clean_json(response))
+        domain = result.get("domain", "general")
+        if domain not in UNIVERSAL_DOMAINS:
+            domain = "general"
+        logger.info(f"[Classify] '{topic[:40]}' -> {domain} (LLM)")
+        return {"domain": domain, "confidence": result.get("confidence", 0.7), "method": "llm"}
+    except Exception as e:
+        logger.error(f"[Classify] LLM failed: {e}")
+        return {"domain": "general", "confidence": 0.5, "method": "fallback"}
+
+
+def detect_topic_category(topic: str) -> str:
+    """Legacy sync wrapper for topic detection."""
+    topic_lower = topic.lower()
+    for domain, keywords in KEYWORD_MAP.items():
+        if any(kw in topic_lower for kw in keywords):
+            return domain
+    return "general"
+
 
 # Personality templates — reduce LLM token usage for agent generation
 PERSONALITY_TEMPLATES = {
@@ -1252,6 +1375,47 @@ async def resolve_ticker(query: str, graph: dict) -> list:
     return unique[:5]
 
 
+
+async def fetch_wikipedia_context(topic: str) -> dict:
+    """Fetch Wikipedia summary for background context. Free, no API key."""
+    try:
+        encoded = urllib.parse.quote(topic.split("?")[0].strip()[:80])
+        url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{encoded}"
+        req = urllib.request.Request(url, headers={"User-Agent": "SwarmSim/1.0"})
+        loop = asyncio.get_running_loop()
+        def _fetch():
+            with urllib.request.urlopen(req, timeout=5) as r:
+                return json.loads(r.read())
+        data = await loop.run_in_executor(None, _fetch)
+        extract = data.get("extract", "")
+        if extract and len(extract) > 50:
+            return {"available": True, "summary": extract[:600]}
+    except Exception:
+        pass
+    return {"available": False}
+
+
+async def fetch_hacker_news(topic: str) -> dict:
+    """Search Hacker News for tech topics. Free, no API key."""
+    try:
+        query = urllib.parse.quote(topic[:60])
+        url = f"https://hn.algolia.com/api/v1/search?query={query}&hitsPerPage=8&tags=story"
+        req = urllib.request.Request(url, headers={"User-Agent": "SwarmSim/1.0"})
+        loop = asyncio.get_running_loop()
+        def _fetch():
+            with urllib.request.urlopen(req, timeout=5) as r:
+                return json.loads(r.read())
+        data = await loop.run_in_executor(None, _fetch)
+        hits = data.get("hits", [])
+        if hits:
+            titles = [h.get("title", "") for h in hits if h.get("title")]
+            return {"available": True, "headlines": titles[:8],
+                    "signal_text": f"HN: {len(titles)} stories | Top: {titles[0][:80]}" if titles else ""}
+    except Exception:
+        pass
+    return {"available": False}
+
+
 async def fetch_stock_data_for_prediction(tickers: list) -> list:
     """Fetch 60d OHLCV + MA5/MA20/RSI/support/resistance per ticker."""
     if not yf:
@@ -1604,6 +1768,7 @@ async def get_cached_graph(topic: str, prediction_query: str) -> dict | None:
     return json.loads(cached["graph_json"]) if cached else None
 
 async def save_graph_cache(topic: str, prediction_query: str, graph: dict):
+    from services.agents.graph_agent import strip_runtime_fields
     cache_key = hashlib.md5(
         f"{topic.lower().strip()}{prediction_query[:50].lower()}".encode()
     ).hexdigest()
@@ -1611,7 +1776,7 @@ async def save_graph_cache(topic: str, prediction_query: str, graph: dict):
         {"hash": cache_key},
         {
             "hash": cache_key,
-            "graph_json": json.dumps(graph),
+            "graph_json": json.dumps(strip_runtime_fields(graph)),
             "topic": topic,
             "created_at": datetime.now(timezone.utc).isoformat()
         },
@@ -1784,14 +1949,17 @@ async def upload_document(
 ):
     """Upload document and extract knowledge graph via Graph Agent"""
     from services.agents import graph_agent as graph_agent_module
+    from services.agents.graph_agent import strip_runtime_fields
     await get_owned_session(session_id, request)
     
     # Parse document
     text, image_data = await parse_document(file)
     
     try:
+        # Use Haiku for faster graph extraction (image uploads still use Claude for vision)
+        graph_call_fn = call_claude if image_data else call_claude_fast
         graph = await graph_agent_module.run_from_document(
-            text, prediction_query, call_claude, image_data=image_data
+            text, prediction_query, graph_call_fn, image_data=image_data
         )
     except json.JSONDecodeError as e:
         logger.error(f"JSON parsing error: {e}")
@@ -1806,31 +1974,45 @@ async def upload_document(
         {
             "$set": {
                 "status": "graph_ready",
-                "graph_json": json.dumps(graph),
+                "graph_json": json.dumps(strip_runtime_fields(graph)),
                 "prediction_query": prediction_query,
+                "graph_entity_count": graph.get("entity_count", len(graph.get("entities", []))),
+                "graph_rel_count": graph.get("relationship_count", len(graph.get("relationships", []))),
+                "graph_themes": graph.get("themes", []),
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }
         }
     )
     
-    return {"status": "graph_ready", "graph": graph}
+    return {"status": "graph_ready", "graph": strip_runtime_fields(graph)}
 
 
 async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_query: str):
     """Background task: orchestrator runs Intel + Graph pipeline."""
     from services.agents import orchestrator
+    from services.agents.graph_agent import strip_runtime_fields
     try:
         await db.sessions.update_one(
             {"id": session_id},
-            {"$set": {"live_progress": "Initializing web search...", "live_progress_step": 0, "live_progress_total": 9}}
+            {"$set": {"live_progress": "Classifying topic domain...", "live_progress_step": 0, "live_progress_total": 9}}
         )
 
-        # Fetch real-time financial data
+        # Classify the topic into a universal domain
+        topic_meta = await classify_topic(topic)
+        domain = topic_meta.get("domain", "general")
+        logger.info(f"[Live] Domain: {domain} ({topic_meta.get('method','?')})")
+
         await db.sessions.update_one(
             {"id": session_id},
-            {"$set": {"live_progress": "Fetching real-time market data...", "live_progress_step": 0}}
+            {"$set": {"domain": domain, "topic_meta": topic_meta}}
         )
-        financial_data = await fetch_financial_data(topic)
+
+        # Fetch real-time financial data (only for financial/crypto/macro)
+        await db.sessions.update_one(
+            {"id": session_id},
+            {"$set": {"live_progress": "Fetching real-time data...", "live_progress_step": 1}}
+        )
+        financial_data = await fetch_financial_data(topic) if domain in ["financial", "crypto", "macro"] else {"has_data": False}
 
         # Fetch news headlines
         await db.sessions.update_one(
@@ -1861,7 +2043,7 @@ async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_q
             )
             logger.info(f"[Live] Grok Twitter seeded: {len(grok_twitter_result['tweets'])} posts")
 
-        if not web_data.get("results") and not financial_data.get("has_data") and not grok_web_brief:
+        if not web_data.get("results") and not financial_data.get("has_data") and not grok_web_brief and not yahoo_headlines.strip():
             await db.sessions.update_one(
                 {"id": session_id},
                 {"$set": {"live_fetch_status": "failed", "live_fetch_error": "Could not fetch live data. Please try a different topic."}}
@@ -1872,9 +2054,24 @@ async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_q
         context_parts = [f"- {r['title']}: {r['snippet']}" for r in web_data["results"][:20]]
         web_context = "\n".join(context_parts)
 
+        # If web scraping returned nothing, use news headlines as context
+        if not web_context.strip() and yahoo_headlines.strip():
+            web_context = f"=== NEWS HEADLINES ===\n{yahoo_headlines}\n=== END HEADLINES ==="
+
         # Prepend Grok web intel brief if available (higher quality, more current)
         if grok_web_brief:
             web_context = f"=== GROK REAL-TIME WEB INTELLIGENCE ===\n{grok_web_brief}\n=== END GROK INTEL ===\n\n{web_context}"
+
+        # Add Wikipedia context for background (free, no key)
+        wiki = await fetch_wikipedia_context(topic)
+        if wiki.get("available"):
+            web_context += f"\n\n=== WIKIPEDIA BACKGROUND ===\n{wiki['summary']}\n=== END WIKIPEDIA ==="
+
+        # Add Hacker News for tech topics (free, no key)
+        if domain == "technology":
+            hn = await fetch_hacker_news(topic)
+            if hn.get("available"):
+                web_context += f"\n\n=== HACKER NEWS ===\n{hn.get('signal_text','')}\n=== END HN ==="
 
         financial_context = ""
         if financial_data.get("has_data"):
@@ -1900,12 +2097,13 @@ async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_q
         cached_graph = await get_cached_graph(topic, prediction_query)
         if cached_graph:
             logger.info(f"[Cache] Graph cache hit for topic: {topic}")
-            # Still need intel brief from orchestrator, but skip graph extraction
+            # Skip graph extraction — only run Intel + Critic
             call_fns = {"premium": call_claude_premium, "fast": call_claude_fast, "flash": call_gemini_flash}
             state = await orchestrator.run_live_intel_pipeline(
                 session_id, topic, horizon, prediction_query,
                 web_context, yahoo_headlines, financial_context,
-                financial_data, call_fns, db
+                financial_data, call_fns, db,
+                skip_graph=True
             )
             intel_brief = state["intel_brief"]
             graph = cached_graph
@@ -1929,26 +2127,37 @@ async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_q
                     "data_mode": "live",
                     "topic": topic,
                     "prediction_query": prediction_query,
-                    "graph_json": json.dumps(graph),
+                    "graph_json": json.dumps(strip_runtime_fields(graph)),
                     "intel_brief": json.dumps(intel_brief),
                     "fetched_at": web_data["fetched_at"],
                     "live_fetch_status": "completed",
                     "live_progress": "Complete!",
                     "brief_critique": json.dumps(state.get("brief_critique", {})),
+                    "graph_entity_count": graph.get("entity_count", len(graph.get("entities", []))),
+                    "graph_rel_count": graph.get("relationship_count", len(graph.get("relationships", []))),
+                    "graph_themes": graph.get("themes", []),
                     "updated_at": datetime.now(timezone.utc).isoformat()
                 }
             }
         )
-        logger.info(f"Live fetch completed for session {session_id}: {len(graph.get('entities', []))} entities")
+        logger.info(f"Live fetch completed for session {session_id}: {graph.get('entity_count', len(graph.get('entities', [])))} entities, {graph.get('relationship_count', len(graph.get('relationships', [])))} relationships")
 
     except Exception as e:
-        logger.error(f"Live fetch failed for session {session_id}: {e}")
+        error_str = str(e)
+        logger.error(f"Live fetch failed for session {session_id}: {error_str}")
+
+        # Provide user-friendly error for budget exhaustion
+        if "budget" in error_str.lower() or "exceeded" in error_str.lower():
+            user_error = "LLM budget exhausted. Please top up via Profile > Universal Key > Add Balance, then try again."
+        else:
+            user_error = error_str[:200]
+
         await db.sessions.update_one(
             {"id": session_id},
             {
                 "$set": {
                     "live_fetch_status": "failed",
-                    "live_fetch_error": str(e)[:200],
+                    "live_fetch_error": user_error,
                     "live_progress": "Failed",
                     "updated_at": datetime.now(timezone.utc).isoformat()
                 }
@@ -1967,7 +2176,7 @@ async def fetch_live_data(session_id: str, request: FetchLiveRequest):
     if not topic:
         raise HTTPException(status_code=400, detail="Topic cannot be empty")
     horizon = request.horizon
-    prediction_query = request.prediction_query or f"What will happen with {topic} in the {horizon.lower()}?"
+    prediction_query = build_prediction_question(request.prediction_query, topic, horizon.lower())
     
     # Mark as fetching
     await db.sessions.update_one(
@@ -2008,6 +2217,7 @@ async def get_live_status(session_id: str):
         result.update({
             "graph": graph,
             "intel_brief": intel_brief,
+            "domain": session.get("domain", "general"),
             "sources_count": len(intel_brief.get("entities", [])) if intel_brief else 0,
             "fetched_at": session.get("fetched_at"),
         })
@@ -3029,6 +3239,9 @@ Return JSON with ONLY these fields:
     calibrate_report_confidence(report)
     report["ensemble_forecast"] = build_ensemble_forecast(posts, report)
     report["evidence_ledger"] = build_evidence_ledger(session, graph, posts, stock_data, report)
+    # Inject domain from session into report (LLM output doesn't include it)
+    if not report.get("domain"):
+        report["domain"] = session.get("domain", "general")
 
     # Add real vs simulated sentiment comparison if social seed exists
     real_sentiment = session.get("social_seed_sentiment")
@@ -3066,6 +3279,11 @@ Return JSON with ONLY these fields:
     # Background critic check — runs 30s later, non-blocking
     asyncio.create_task(run_background_critic(session_id, report))
 
+    # Freeze prediction for tracking — non-blocking
+    session_fresh = await db.sessions.find_one({"id": session_id})
+    if session_fresh:
+        asyncio.create_task(freeze_prediction(session_id, report, session_fresh))
+
     return {"report": report}
 
 
@@ -3079,6 +3297,754 @@ async def get_report(session_id: str):
         raise HTTPException(status_code=404, detail="Report not generated yet")
     
     return json.loads(session["report_json"])
+
+
+# ── PREDICTION TRACKING ──────────────────────────────────────────────────────
+
+# Prediction type per domain
+DOMAIN_PREDICTION_TYPE = {
+    "financial":    "DIRECTIONAL",
+    "crypto":       "DIRECTIONAL",
+    "macro":        "DIRECTIONAL",
+    "real_estate":  "DIRECTIONAL",
+    "political":    "OUTCOME",
+    "sports":       "OUTCOME",
+    "business":     "OUTCOME",
+    "science":      "OUTCOME",
+    "legal":        "OUTCOME",
+    "health":       "OUTCOME",
+    "general":      "OUTCOME",
+    "technology":   "SENTIMENT",
+    "entertainment":"SENTIMENT",
+    "geopolitical": "SENTIMENT",
+    "social":       "SENTIMENT",
+    "media":        "SENTIMENT",
+}
+
+PREDICTION_TYPE_LABELS = {
+    "DIRECTIONAL": {"positive": "UP", "negative": "DOWN", "neutral": "FLAT", "unknown": "UNKNOWN"},
+    "OUTCOME":     {"positive": "YES", "negative": "NO", "neutral": "PARTIAL", "unknown": "PENDING"},
+    "SENTIMENT":   {"positive": "POSITIVE", "negative": "NEGATIVE", "neutral": "MIXED", "unknown": "PENDING"},
+}
+
+
+async def reschedule_prediction(record: dict, reason: str):
+    """Push score_at forward by 6 hours when outcome not available yet."""
+    retry_at = datetime.now(timezone.utc) + timedelta(hours=6)
+    retry_count = record.get("retry_count", 0) + 1
+
+    if retry_count > 8:
+        await db.prediction_records.update_one(
+            {"_id": record["_id"]},
+            {"$set": {"status": "expired", "expire_reason": reason}}
+        )
+        logger.warning(f"[Scorer] {record['session_id'][:8]} expired after max retries: {reason}")
+        return
+
+    await db.prediction_records.update_one(
+        {"_id": record["_id"]},
+        {"$set": {
+            "score_at":     retry_at.isoformat(),
+            "retry_count":  retry_count,
+            "retry_reason": reason,
+        }}
+    )
+    logger.info(
+        f"[Scorer] {record['session_id'][:8]} rescheduled "
+        f"(retry {retry_count}/8, reason={reason}) -> {retry_at.strftime('%H:%M UTC')}"
+    )
+
+
+async def fetch_google_news_for_scoring(query: str) -> str:
+    """Fetch Google News headlines for prediction scoring context."""
+    try:
+        import feedparser
+        encoded = urllib.parse.quote(query)
+        url = f"https://news.google.com/rss/search?q={encoded}&hl=en&gl=US&ceid=US:en"
+        loop = asyncio.get_running_loop()
+        feed = await loop.run_in_executor(None, lambda: feedparser.parse(url))
+        headlines = []
+        for entry in feed.entries[:8]:
+            title = entry.get("title", "").strip()
+            title = re.sub(r'<[^>]+>', '', title).strip()
+            if title and len(title) > 15:
+                source = entry.get("source", {}).get("title", "News")
+                headlines.append(f"[{source}] {title}")
+        return "\n".join(headlines)
+    except Exception as e:
+        logger.warning(f"[Scorer] Google News fetch failed: {e}")
+        return ""
+
+
+async def fetch_trends_signal(topic: str, domain: str) -> dict:
+    """Use HN + Wikipedia as a trends proxy signal."""
+    try:
+        hn = await fetch_hacker_news(topic)
+        wiki = await fetch_wikipedia_context(topic)
+        parts = []
+        if hn.get("available"):
+            parts.append(hn.get("signal_text", ""))
+        if wiki.get("available"):
+            parts.append(f"Wikipedia: {wiki.get('summary', '')[:200]}")
+        if parts:
+            return {"available": True, "signal_text": " | ".join(parts)}
+    except Exception as e:
+        logger.warning(f"[Scorer] Trends signal failed: {e}")
+    return {"available": False}
+
+
+async def score_outcome_prediction(record: dict) -> dict:
+    """Score binary OUTCOME predictions (elections, sports, deals, etc.)."""
+    topic     = record.get("topic", "")
+    predicted = record.get("predicted_direction", "YES")
+    outcome   = record.get("predicted_outcome", "")
+    domain    = record.get("domain", "general")
+
+    search_queries = {
+        "political":     f"{topic} election result winner declared",
+        "sports":        f"{topic} match result final score winner",
+        "business":      f"{topic} deal announcement completed signed",
+        "science":       f"{topic} results published trial outcome",
+        "legal":         f"{topic} verdict ruling judgment",
+        "health":        f"{topic} approval results announcement",
+        "entertainment": f"{topic} box office collection opening day result",
+    }
+    search_q = search_queries.get(domain, f"{topic} outcome result")
+
+    actual_text = ""
+    grok_result = await fetch_grok_web_intel(search_q, "current result")
+    if grok_result.get("available") and grok_result.get("brief"):
+        actual_text = grok_result["brief"]
+
+    if not actual_text:
+        actual_text = await fetch_google_news_for_scoring(search_q)
+
+    if not actual_text or len(actual_text) < 30:
+        return {"status": "pending", "reason": "no_outcome_found"}
+
+    try:
+        assessment = await call_claude_fast(
+            "You are an impartial prediction verifier. Be precise. Return ONLY JSON.",
+            f"""Original prediction: "{outcome}"
+Predicted outcome: {predicted} (YES = predicted event happens, NO = does not happen)
+Domain: {domain}
+
+Actual result found:
+{actual_text[:600]}
+
+Assess whether the prediction was correct.
+- If result is not yet available or unclear, set status to "pending"
+- Map outcome to: YES (event happened as predicted), NO (didn't happen), PARTIAL (partially correct)
+
+Return JSON:
+{{"status":"scored|pending","actual_direction":"YES|NO|PARTIAL|UNKNOWN","direction_correct":true|false,"confidence":0.0-1.0,"explanation":"one sentence"}}""",
+            max_tokens=150
+        )
+        result = json.loads(clean_json_response(assessment))
+
+        if result.get("status") == "pending":
+            return {"status": "pending", "reason": "claude_uncertain"}
+
+        direction_correct = result.get("direction_correct", False)
+        if isinstance(direction_correct, str):
+            direction_correct = direction_correct.lower() == 'true'
+
+        actual_direction = result.get("actual_direction", "UNKNOWN")
+        if actual_direction not in ["YES", "NO", "PARTIAL", "UNKNOWN"]:
+            actual_direction = "UNKNOWN"
+
+        if actual_direction == "PARTIAL" and predicted in ["YES", "NO"]:
+            direction_correct = False
+
+        return {
+            "status":            "scored",
+            "actual_direction":  actual_direction,
+            "direction_correct": direction_correct,
+            "actual_text":       actual_text[:300],
+            "explanation":       result.get("explanation", ""),
+        }
+    except Exception as e:
+        logger.error(f"[Scorer] Outcome assessment failed: {e}")
+        return {"status": "pending", "reason": str(e)[:80]}
+
+
+async def score_sentiment_prediction(record: dict) -> dict:
+    """Score SENTIMENT predictions (technology trends, geopolitics, social)."""
+    topic     = record.get("topic", "")
+    predicted = record.get("predicted_direction", "POSITIVE")
+    outcome   = record.get("predicted_outcome", "")
+
+    actual_text = ""
+    grok_result = await fetch_grok_web_intel(
+        f"{topic} public opinion sentiment reaction", "current sentiment"
+    )
+    if grok_result.get("available"):
+        actual_text = grok_result.get("brief", "")
+
+    trends_result = await fetch_trends_signal(topic, record.get("domain", "general"))
+    trends_text   = trends_result.get("signal_text", "") if trends_result.get("available") else ""
+
+    combined = f"{actual_text}\n{trends_text}".strip()
+
+    if not combined or len(combined) < 30:
+        return {"status": "pending", "reason": "no_sentiment_data"}
+
+    try:
+        assessment = await call_claude_fast(
+            "You are a sentiment analyst. Return ONLY JSON.",
+            f"""Predicted: "{outcome}"
+Predicted sentiment direction: {predicted} (POSITIVE / NEGATIVE / MIXED)
+
+Current information:
+{combined[:600]}
+
+Did the predicted sentiment direction match reality?
+- POSITIVE: public/market/media sentiment shifted positive
+- NEGATIVE: shifted negative
+- MIXED: no clear direction
+
+Return JSON:
+{{"status":"scored|pending","actual_direction":"POSITIVE|NEGATIVE|MIXED|UNKNOWN","direction_correct":true|false,"confidence":0.0-1.0,"explanation":"one sentence"}}""",
+            max_tokens=150
+        )
+        result = json.loads(clean_json_response(assessment))
+
+        if result.get("status") == "pending":
+            return {"status": "pending", "reason": "sentiment_unclear"}
+
+        direction_correct = result.get("direction_correct", False)
+        if isinstance(direction_correct, str):
+            direction_correct = direction_correct.lower() == 'true'
+
+        return {
+            "status":            "scored",
+            "actual_direction":  result.get("actual_direction", "UNKNOWN"),
+            "direction_correct": direction_correct,
+            "actual_text":       combined[:300],
+            "explanation":       result.get("explanation", ""),
+        }
+    except Exception as e:
+        logger.error(f"[Scorer] Sentiment assessment failed: {e}")
+        return {"status": "pending", "reason": str(e)[:80]}
+
+
+async def freeze_prediction(session_id: str, report: dict, session: dict):
+    """Freeze prediction at simulation time. Extracts prediction type appropriate to domain."""
+    try:
+        pred         = report.get("prediction", {})
+        outcome_text = pred.get("outcome", "")
+        confidence   = pred.get("confidence_score", 0.5)
+        timeframe    = pred.get("timeframe", "24 hours")
+        domain       = report.get("domain", session.get("domain", "general"))
+        # Use raw topic, not the wrapped prediction_query template
+        topic        = session.get("topic", "") or session.get("prediction_query", "")
+        stock_data   = report.get("stock_data", [])
+        tickers      = [s["ticker"] for s in stock_data if s.get("ticker")]
+
+        pred_type = DOMAIN_PREDICTION_TYPE.get(domain, "OUTCOME")
+
+        # Override: if tickers found, always use DIRECTIONAL
+        if tickers and pred_type != "DIRECTIONAL":
+            logger.info(
+                f"[Track] Overriding pred_type {pred_type} -> DIRECTIONAL "
+                f"because tickers found: {tickers}"
+            )
+            pred_type = "DIRECTIONAL"
+
+        # Determine horizon in hours
+        horizon_map = {
+            "24 hour": 24, "next 24": 24, "tomorrow": 24,
+            "next session": 10, "intraday": 10, "today": 12,
+            "next week": 168, "week": 168, "7 day": 168,
+            "next month": 720, "month": 720, "30 day": 720,
+            "3 month": 2160, "quarter": 2160,
+            "6 month": 4320, "year": 8760, "long term": 8760,
+        }
+        horizon_hours = 24
+        tf_lower = timeframe.lower()
+        for key, hours in horizon_map.items():
+            if key in tf_lower:
+                horizon_hours = hours
+                break
+
+        outcome_lower = outcome_text.lower()
+        predicted_direction = "UNKNOWN"
+        predicted_level = None
+        predicted_level_text = ""
+
+        if pred_type == "DIRECTIONAL":
+            predicted_direction = (
+                "UP"   if any(w in outcome_lower for w in
+                              ["rise","gain","rally","up","higher","bullish","increase","positive","above"]) else
+                "DOWN" if any(w in outcome_lower for w in
+                              ["fall","drop","crash","down","lower","bearish","decrease","negative","below","decline"]) else
+                "FLAT"
+            )
+            level_match = re.search(r'[\₹\$]?([\d,]+(?:\.\d+)?)', outcome_text)
+            if level_match:
+                try:
+                    predicted_level = float(level_match.group(1).replace(",", ""))
+                except ValueError:
+                    predicted_level = None
+            predicted_level_text = f"Target: {predicted_level}" if predicted_level is not None else ""
+
+        elif pred_type == "OUTCOME":
+            positive_signals = [
+                "win","wins","victory","succeed","pass","approve","elected",
+                "beats","defeats","breaks","achieves","yes","will happen",
+                "likely","expected","predicted to","favoured","positive"
+            ]
+            negative_signals = [
+                "lose","loses","defeat","fail","reject","blocked",
+                "unlikely","won't","will not","no","negative","falls short"
+            ]
+            pos_count = sum(1 for w in positive_signals if w in outcome_lower)
+            neg_count = sum(1 for w in negative_signals if w in outcome_lower)
+            predicted_direction = "YES" if pos_count >= neg_count else "NO"
+            entity_match = re.search(
+                r'([A-Z][A-Za-z\s]{2,20})\s+(?:will|would|is expected to|likely to)',
+                outcome_text
+            )
+            if entity_match:
+                predicted_level_text = f"Predicted: {entity_match.group(1).strip()}"
+
+        else:  # SENTIMENT
+            positive_signals = [
+                "positive","improve","grow","rise","increase","surge","recover",
+                "dominate","succeed","popular","bullish","optimistic","favor"
+            ]
+            negative_signals = [
+                "negative","worsen","decline","fall","decrease","collapse",
+                "fail","unpopular","bearish","pessimistic","against","controversy"
+            ]
+            pos_count = sum(1 for w in positive_signals if w in outcome_lower)
+            neg_count = sum(1 for w in negative_signals if w in outcome_lower)
+            predicted_direction = "POSITIVE" if pos_count > neg_count else "NEGATIVE" if neg_count > pos_count else "MIXED"
+
+        baseline_prices = {}
+        for s in stock_data:
+            baseline_prices[s["ticker"]] = s.get("last_close", 0)
+
+        opinion  = report.get("opinion_landscape", {})
+        score_at = datetime.now(timezone.utc) + timedelta(hours=horizon_hours)
+
+        # Build agent calls with type-aware directions
+        agents = json.loads(session.get("agents_json", "[]"))
+        agent_calls = []
+        for agent in agents:
+            bs       = agent.get("belief_state", {})
+            position = bs.get("position", 0.0)
+
+            if pred_type == "DIRECTIONAL":
+                agent_dir = "UP" if position > 0.1 else "DOWN" if position < -0.1 else "FLAT"
+            elif pred_type == "OUTCOME":
+                agent_dir = "YES" if position > 0.1 else "NO" if position < -0.1 else "PARTIAL"
+            else:
+                agent_dir = "POSITIVE" if position > 0.1 else "NEGATIVE" if position < -0.1 else "MIXED"
+
+            agent_calls.append({
+                "agent_id":            agent.get("id", ""),
+                "agent_name":          agent.get("name", ""),
+                "personality_type":    agent.get("personality_type", ""),
+                "occupation":          agent.get("occupation", ""),
+                "predicted_direction": agent_dir,
+                "belief_position":     position,
+                "correct":             None,
+            })
+
+        record = {
+            "session_id":              session_id,
+            "topic":                   topic,
+            "domain":                  domain,
+            "prediction_type":         pred_type,
+            "tickers":                 tickers,
+            "baseline_prices":         baseline_prices,
+            "predicted_direction":     predicted_direction,
+            "predicted_outcome_label": predicted_direction,
+            "predicted_level":         predicted_level,
+            "predicted_level_text":    predicted_level_text,
+            "predicted_outcome":       outcome_text[:400],
+            "confidence_score":        confidence,
+            "support_pct":             opinion.get("support_percentage", 50),
+            "opposition_pct":          opinion.get("opposition_percentage", 30),
+            "horizon_hours":           horizon_hours,
+            "predicted_at":            datetime.now(timezone.utc).isoformat(),
+            "score_at":                score_at.isoformat(),
+            "status":                  "pending",
+            "direction_correct":       None,
+            "actual_direction":        None,
+            "actual_price":            None,
+            "actual_outcome_text":     None,
+            "level_error_pct":         None,
+            "calibration_delta":       None,
+            "composite_score":         None,
+            "agent_calls":             agent_calls,
+            "retry_count":             0,
+        }
+
+        await db.prediction_records.insert_one(record)
+        logger.info(
+            f"[Track] Frozen: '{topic[:40]}' | type={pred_type} | "
+            f"direction={predicted_direction} | scores at {score_at.strftime('%Y-%m-%d %H:%M UTC')}"
+        )
+    except Exception as e:
+        logger.error(f"[Track] Failed to freeze prediction for {session_id[:8]}: {e}")
+
+
+async def score_pending_predictions():
+    """Find all due predictions and score them against real outcomes."""
+    now = datetime.now(timezone.utc)
+    due = await db.prediction_records.find({
+        "status": "pending",
+        "score_at": {"$lte": now.isoformat()}
+    }).sort("score_at").limit(50).to_list(50)
+
+    if not due:
+        return
+
+    logger.info(f"[Scorer] {len(due)} predictions due for scoring")
+
+    try:
+        import yfinance as yf
+    except ImportError:
+        logger.warning("[Scorer] yfinance not installed — skipping")
+        return
+
+    for record in due:
+        try:
+            await score_single_prediction(record, yf)
+        except Exception as e:
+            logger.error(f"[Scorer] Error scoring {record['session_id'][:8]}: {e}")
+            await db.prediction_records.update_one(
+                {"_id": record["_id"]},
+                {"$set": {"status": "error", "error": str(e)}}
+            )
+
+
+async def score_single_prediction(record: dict, yf):
+    """Score a prediction record against real-world outcomes. Routes to correct scorer based on prediction_type."""
+    pred_type   = record.get("prediction_type", DOMAIN_PREDICTION_TYPE.get(record.get("domain", "general"), "OUTCOME"))
+    domain      = record.get("domain", "general")
+    topic       = record.get("topic", "")
+    predicted   = record.get("predicted_direction", "")
+    confidence  = record.get("confidence_score", 0.5)
+
+    actual_direction  = None
+    actual_price      = None
+    actual_text       = None
+    direction_correct = False
+    level_error_pct   = None
+
+    # ── DIRECTIONAL: financial price comparison ───────────────────────────
+    if pred_type == "DIRECTIONAL":
+        tickers        = record.get("tickers", [])
+        baseline       = record.get("baseline_prices", {})
+        predicted_level = record.get("predicted_level")
+
+        if not tickers:
+            await reschedule_prediction(record, "no_tickers")
+            return
+
+        primary_ticker = tickers[0]
+        baseline_price = baseline.get(primary_ticker, 0)
+
+        ticker_variants = [primary_ticker]
+        if primary_ticker in ["^NSEI", "NIFTY50"]:
+            ticker_variants = ["^NSEI", "NIFTY50.NS", "^CNXNIFTY"]
+        elif primary_ticker in ["^BSESN", "SENSEX"]:
+            ticker_variants = ["^BSESN", "SENSEX.NS"]
+        elif primary_ticker == "^NSEBANK":
+            ticker_variants = ["^NSEBANK", "BANKNIFTY.NS"]
+
+        loop = asyncio.get_event_loop()
+
+        def _fetch_price():
+            import time
+            for sym in ticker_variants:
+                for attempt in range(2):
+                    try:
+                        t    = yf.Ticker(sym)
+                        hist = t.history(period="5d", interval="1d")
+                        if not hist.empty:
+                            price = float(hist["Close"].iloc[-1])
+                            if price > 0:
+                                logger.info(f"[Scorer] {sym}: {price}")
+                                return price, sym
+                    except Exception as e:
+                        logger.debug(f"[Scorer] {sym} attempt {attempt+1}: {e}")
+                    time.sleep(0.5)
+            try:
+                fi = yf.Ticker(ticker_variants[0]).fast_info
+                p  = getattr(fi, "last_price", None)
+                if p and float(p) > 0:
+                    return float(p), ticker_variants[0]
+            except Exception:
+                pass
+            return None, None
+
+        actual_price, used_ticker = await loop.run_in_executor(None, _fetch_price)
+
+        if actual_price is None:
+            await reschedule_prediction(record, "price_unavailable")
+            return
+
+        if baseline_price > 0:
+            change_pct = (actual_price - baseline_price) / baseline_price * 100
+            actual_direction  = "UP" if change_pct > 0.3 else "DOWN" if change_pct < -0.3 else "FLAT"
+            direction_correct = (predicted == actual_direction)
+            if predicted_level is not None and predicted_level > 0:
+                level_error_pct = abs(actual_price - predicted_level) / predicted_level * 100
+        else:
+            actual_direction  = "UNKNOWN"
+            direction_correct = False
+
+    # ── OUTCOME: binary event (election, sports, business deal) ──────────
+    elif pred_type == "OUTCOME":
+        result = await score_outcome_prediction(record)
+        if result.get("status") == "pending":
+            await reschedule_prediction(record, result.get("reason", "outcome_not_found"))
+            return
+        actual_direction  = result.get("actual_direction", "UNKNOWN")
+        actual_text       = result.get("actual_text", "")
+        direction_correct = result.get("direction_correct", False)
+
+    # ── SENTIMENT: trend/opinion assessment ───────────────────────────────
+    elif pred_type == "SENTIMENT":
+        result = await score_sentiment_prediction(record)
+        if result.get("status") == "pending":
+            await reschedule_prediction(record, result.get("reason", "sentiment_unclear"))
+            return
+        actual_direction  = result.get("actual_direction", "UNKNOWN")
+        actual_text       = result.get("actual_text", "")
+        direction_correct = result.get("direction_correct", False)
+
+    # ── Compute composite score ───────────────────────────────────────────
+    direction_score = 1.0 if direction_correct else 0.0
+    level_score = 1.0
+    if level_error_pct is not None:
+        level_score = max(0.0, 1.0 - (level_error_pct / 10.0))
+    composite_score = round(max(0.0, min(1.0, direction_score * 0.7 + level_score * 0.3)), 3)
+    calibration_delta = round(confidence - direction_score, 3)
+
+    # ── Score individual agents ───────────────────────────────────────────
+    scored_agents = []
+    now = datetime.now(timezone.utc)
+    for call in record.get("agent_calls", []):
+        agent_dir = call.get("predicted_direction")
+        if pred_type == "OUTCOME" and actual_direction == "PARTIAL":
+            agent_correct = (agent_dir == "PARTIAL")
+        else:
+            agent_correct = (agent_dir == actual_direction)
+
+        scored_agents.append({**call, "correct": agent_correct})
+        await db.agent_accuracy.update_one(
+            {"agent_name": call["agent_name"], "personality_type": call["personality_type"]},
+            {"$inc": {
+                "total_predictions":   1,
+                "correct_predictions": 1 if agent_correct else 0,
+            }, "$set": {"updated_at": now.isoformat()}},
+            upsert=True,
+        )
+
+    # ── Save scored record ────────────────────────────────────────────────
+    await db.prediction_records.update_one(
+        {"_id": record["_id"]},
+        {"$set": {
+            "status":              "scored",
+            "direction_correct":   direction_correct,
+            "actual_direction":    actual_direction,
+            "actual_price":        actual_price,
+            "actual_outcome_text": actual_text,
+            "level_error_pct":     level_error_pct,
+            "calibration_delta":   calibration_delta,
+            "composite_score":     composite_score,
+            "agent_calls":         scored_agents,
+            "scored_at":           now.isoformat(),
+        }}
+    )
+
+    # Update global accuracy summary with type tracking
+    await db.accuracy_summary.update_one(
+        {"_id": "global"},
+        {"$inc": {
+            "total_scored":                          1,
+            "total_correct":                         1 if direction_correct else 0,
+            f"type_{pred_type.lower()}":             1,
+            f"type_{pred_type.lower()}_correct":     1 if direction_correct else 0,
+            f"domain_{domain}":                      1,
+            f"domain_{domain}_correct":              1 if direction_correct else 0,
+        }, "$set": {"updated_at": now.isoformat()}},
+        upsert=True,
+    )
+
+    logger.info(
+        f"[Scorer] '{topic[:30]}' ({pred_type}) -> "
+        f"{predicted} -> actual {actual_direction} | "
+        f"{'CORRECT' if direction_correct else 'WRONG'} | "
+        f"score={composite_score:.2f}"
+    )
+
+
+# APScheduler — score predictions every 30 minutes
+_prediction_scheduler = AsyncIOScheduler(timezone="UTC")
+_prediction_scheduler.add_job(
+    score_pending_predictions,
+    trigger="interval",
+    minutes=30,
+    id="prediction_scorer",
+    replace_existing=True,
+    max_instances=1,
+)
+
+
+@api_router.get("/predictions/accuracy")
+async def get_accuracy_stats():
+    """Global accuracy stats for the accuracy dashboard."""
+    summary = await db.accuracy_summary.find_one({"_id": "global"}) or {}
+
+    total = summary.get("total_scored", 0)
+    correct = summary.get("total_correct", 0)
+    win_rate = round((correct / total * 100) if total > 0 else 0, 1)
+
+    recent = await db.prediction_records.find(
+        {"status": {"$in": ["scored", "pending"]}},
+        {"_id": 0, "session_id": 1, "topic": 1, "domain": 1,
+         "prediction_type": 1, "predicted_direction": 1, "actual_direction": 1,
+         "direction_correct": 1, "composite_score": 1,
+         "confidence_score": 1, "scored_at": 1, "predicted_at": 1, "status": 1}
+    ).sort([("predicted_at", -1)]).limit(20).to_list(20)
+
+    pending_count = await db.prediction_records.count_documents({"status": "pending"})
+
+    # Domain breakdown — check all universal domains
+    domain_stats = {}
+    all_domains = ["financial", "crypto", "political", "macro", "general", "sports",
+                   "technology", "entertainment", "geopolitical", "business", "science",
+                   "social", "legal", "health", "real_estate", "media"]
+    for d in all_domains:
+        d_total = summary.get(f"domain_{d}", 0)
+        d_correct = summary.get(f"domain_{d}_correct", 0)
+        if d_total > 0:
+            domain_stats[d.upper()] = {
+                "total": d_total,
+                "correct": d_correct,
+                "win_rate": round((d_correct / d_total * 100), 1),
+            }
+
+    # Type breakdown
+    type_breakdown = {}
+    for pred_type in ["DIRECTIONAL", "OUTCOME", "SENTIMENT"]:
+        t_total   = summary.get(f"type_{pred_type.lower()}", 0)
+        t_correct = summary.get(f"type_{pred_type.lower()}_correct", 0)
+        if t_total > 0:
+            type_breakdown[pred_type] = {
+                "total":    t_total,
+                "correct":  t_correct,
+                "win_rate": round(t_correct / t_total * 100, 1),
+            }
+
+    # Top agents
+    top_agents_raw = await db.agent_accuracy.find(
+        {}, {"_id": 0}
+    ).sort([("correct_predictions", -1), ("total_predictions", -1)]).limit(10).to_list(10)
+
+    top_agents = []
+    for a in top_agents_raw:
+        total_a = a.get("total_predictions", 1)
+        correct_a = a.get("correct_predictions", 0)
+        top_agents.append({
+            "agent_name": a.get("agent_name"),
+            "personality_type": a.get("personality_type"),
+            "total_predictions": total_a,
+            "correct_predictions": correct_a,
+            "win_rate": round((correct_a / total_a * 100) if total_a > 0 else 0, 1),
+        })
+
+    # Calibration buckets
+    all_scored = await db.prediction_records.find(
+        {"status": "scored", "confidence_score": {"$exists": True}, "direction_correct": {"$exists": True}},
+        {"confidence_score": 1, "direction_correct": 1, "_id": 0}
+    ).limit(1000).to_list(1000)
+
+    buckets = {}
+    for rec in all_scored:
+        conf = float(rec.get("confidence_score", 0.5))
+        bk = f"{int(conf * 10) * 10}-{min((int(conf * 10) + 1) * 10, 100)}%"
+        if bk not in buckets:
+            buckets[bk] = {"total": 0, "correct": 0}
+        buckets[bk]["total"] += 1
+        if rec.get("direction_correct"):
+            buckets[bk]["correct"] += 1
+
+    calibration = []
+    for bk in sorted(buckets.keys(), key=lambda x: int(x.split("-")[0])):
+        data = buckets[bk]
+        calibration.append({
+            "bucket": bk,
+            "predicted_pct": int(bk.split("-")[0]),
+            "actual_pct": round((data["correct"] / data["total"] * 100) if data["total"] > 0 else 0, 1),
+            "total": data["total"],
+        })
+
+    return {
+        "total_predictions": total,
+        "total_correct": correct,
+        "win_rate": win_rate,
+        "pending": pending_count,
+        "domain_breakdown": domain_stats,
+        "type_breakdown": type_breakdown,
+        "top_agents": top_agents,
+        "calibration": calibration,
+        "recent": recent,
+    }
+
+
+@api_router.get("/sessions/{session_id}/prediction-outcome")
+async def get_prediction_outcome(session_id: str):
+    """Returns the scoring result for a specific session's prediction."""
+    record = await db.prediction_records.find_one(
+        {"session_id": session_id},
+        {"_id": 0, "session_id": 1, "status": 1, "prediction_type": 1,
+         "predicted_direction": 1, "actual_direction": 1, "actual_price": 1,
+         "actual_outcome_text": 1, "direction_correct": 1,
+         "composite_score": 1, "scored_at": 1, "predicted_outcome": 1,
+         "confidence_score": 1, "level_error_pct": 1, "score_at": 1,
+         "retry_count": 1, "domain": 1}
+    )
+    if not record:
+        return {"status": "not_tracked"}
+
+    if record.get("composite_score") is not None:
+        record["composite_score"] = round(record["composite_score"] * 100)
+
+    return record
+
+
+@api_router.post("/predictions/score-now/{session_id}")
+async def force_score_prediction(session_id: str):
+    """Manually trigger scoring for a specific prediction (for testing)."""
+    record = await db.prediction_records.find_one({"session_id": session_id})
+    if not record:
+        raise HTTPException(status_code=404, detail="No prediction record found")
+    if record.get("status") == "scored":
+        record.pop("_id", None)
+        if record.get("composite_score") is not None:
+            record["composite_score"] = round(record["composite_score"] * 100)
+        return {"message": "Already scored", "record": record}
+
+    try:
+        import yfinance as yf
+        await score_single_prediction(record, yf)
+        updated = await db.prediction_records.find_one(
+            {"session_id": session_id}, {"_id": 0}
+        )
+        if updated and updated.get("composite_score") is not None:
+            updated["composite_score"] = round(updated["composite_score"] * 100)
+        return {"message": "Scored successfully", "record": updated}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error scoring: {e}")
+
+
 
 
 @api_router.get("/sessions/{session_id}/report/pdf")
@@ -3447,6 +4413,16 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+async def startup_scheduler():
+    if not _prediction_scheduler.running:
+        _prediction_scheduler.start()
+        logger.info("[Scheduler] Prediction scorer started — runs every 30 minutes")
+
+
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    if _prediction_scheduler.running:
+        _prediction_scheduler.shutdown()
+        logger.info("[Scheduler] Prediction scorer stopped")
     client.close()

@@ -84,10 +84,22 @@ const SkeletonGrid = ({ count = 4 }) => (
 // Entity type colors
 const ENTITY_COLORS = {
   person: "#f97316",
+  Person: "#f97316",
   organization: "#3b82f6",
+  Organization: "#3b82f6",
   faction: "#a855f7",
   concept: "#22c55e",
+  Concept: "#22c55e",
   event: "#ef4444",
+  Event: "#ef4444",
+  Country: "#06b6d4",
+  Company: "#8b5cf6",
+  Policy: "#eab308",
+  Law: "#f59e0b",
+  Metric: "#14b8a6",
+  Asset: "#ec4899",
+  Instrument: "#d946ef",
+  Location: "#84cc16",
   default: "#6b7280"
 };
 
@@ -170,7 +182,7 @@ const SentimentChart = ({ posts }) => {
   );
 };
 
-const Header = ({ onNewSimulation, hasSession, grokActive, user, onSignOut }) => (
+const Header = ({ onNewSimulation, hasSession, grokActive, user, onSignOut, onShowAccuracy }) => (
   <header className="app-header">
     <div className="logo-wrap">
       <div className="logo-icon-box">
@@ -200,6 +212,15 @@ const Header = ({ onNewSimulation, hasSession, grokActive, user, onSignOut }) =>
           Grok Active
         </span>
       )}
+      <button
+        data-testid="accuracy-dashboard-btn"
+        onClick={onShowAccuracy}
+        className="btn-ghost"
+        style={{padding:'5px 12px',fontSize:'11px',fontFamily:'var(--mono)'}}
+      >
+        <Target className="w-3.5 h-3.5 inline mr-1" />
+        Accuracy
+      </button>
       <span className="badge-live" data-testid="system-status">System Online</span>
       {user && (
         <span className="hidden sm:inline-flex text-xs px-2 py-1 rounded-full border border-sw text-sw2">
@@ -289,19 +310,20 @@ const KnowledgeGraph = ({ graph, onRefresh }) => {
       type: entity.type,
       stance: entity.stance,
       description: entity.description,
+      importance: entity.importance,
       color: ENTITY_COLORS[entity.type] || ENTITY_COLORS.default,
-      val: 8
+      val: entity.importance === 'High' ? 14 : entity.importance === 'Medium' ? 10 : 6
     }));
 
     const nodeIds = new Set(nodes.map(n => n.id));
     const links = (graph.relationships || [])
-      .filter(rel => nodeIds.has(rel.source) && nodeIds.has(rel.target))
       .map(rel => ({
-        source: rel.source,
-        target: rel.target,
-        label: rel.label,
-        weight: rel.weight || 0.5
-      }));
+        source: rel.source_id || rel.source,
+        target: rel.target_id || rel.target,
+        label: rel.type || rel.label,
+        weight: rel.weight || (rel.strength === 'Strong' ? 0.9 : rel.strength === 'Medium' ? 0.6 : 0.3)
+      }))
+      .filter(link => nodeIds.has(link.source) && nodeIds.has(link.target));
 
     return { nodes, links };
   }, [graph]);
@@ -438,6 +460,7 @@ const UploadStep = ({ sessionId, onComplete }) => {
   const [grokStatus, setGrokStatus] = useState(null);
   const [liveProgress, setLiveProgress] = useState(null);
   const [selectedTemplateId, setSelectedTemplateId] = useState(null);
+  const [domain, setDomain] = useState(null);
 
   const addLog = (message, type = "info") => {
     const time = new Date().toLocaleTimeString('en-US', { hour12: false });
@@ -537,7 +560,7 @@ const UploadStep = ({ sessionId, onComplete }) => {
       await axios.post(`${API}/sessions/${sessionId}/fetch-live`, {
         topic: topic,
         horizon: horizon,
-        prediction_query: query || `What will happen with ${topic} in the ${horizon.toLowerCase()}?`
+        prediction_query: query || ''
       }, { timeout: 15000 });
       
       // Poll for status with progress updates
@@ -569,6 +592,7 @@ const UploadStep = ({ sessionId, onComplete }) => {
               progress_total: data.progress_total || 5,
               status: "completed",
             });
+            if (data.domain) setDomain(data.domain);
             setLoading(false);
           } else if (data.status === "failed") {
             clearInterval(pollInterval);
@@ -642,9 +666,13 @@ const UploadStep = ({ sessionId, onComplete }) => {
 
   const exampleTopics = [
     "Bitcoin price movement",
-    "US Federal Reserve interest rates",
-    "AI regulation in Europe",
-    "Tesla stock outlook",
+    "IPL 2026 winner prediction",
+    "Bengal Election which party wins",
+    "OpenAI GPT-5 impact on tech industry",
+    "Bollywood Pushpa 3 box office",
+    "US China trade war impact",
+    "RBI interest rate decision",
+    "Champions League 2026 winner",
   ];
 
   if (graph) {
@@ -669,6 +697,14 @@ const UploadStep = ({ sessionId, onComplete }) => {
               </h3>
               {mode === "live" && (
                 <span className="badge-live" style={{fontSize:'10px',padding:'3px 8px'}}>LIVE</span>
+              )}
+              {domain && (
+                <span data-testid="domain-badge" style={{
+                  fontSize:'10px',padding:'3px 8px',borderRadius:'99px',
+                  background:'rgba(0,245,196,0.08)',
+                  border:'1px solid rgba(0,245,196,0.2)',
+                  color:'var(--cyan)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.05em'
+                }}>{domain.replace('_',' ')}</span>
               )}
             </div>
             
@@ -742,27 +778,72 @@ const UploadStep = ({ sessionId, onComplete }) => {
             
             <div className="grid grid-cols-2 gap-3">
               <div className="rounded-lg p-3" style={{background:'var(--bg3)',border:'1px solid var(--border)'}}>
-                <div className="text-2xl font-bold mono" style={{color:'var(--cyan)'}}>{graph.entities?.length || 0}</div>
+                <div className="text-2xl font-bold mono" style={{color:'var(--cyan)'}}>{graph.entity_count || graph.entities?.length || 0}</div>
                 <div className="text-xs" style={{color:'var(--text2)'}}>Entities</div>
               </div>
               <div className="rounded-lg p-3" style={{background:'var(--bg3)',border:'1px solid var(--border)'}}>
-                <div className="text-2xl font-bold mono" style={{color:'var(--violet)'}}>{graph.relationships?.length || 0}</div>
+                <div className="text-2xl font-bold mono" style={{color:'var(--violet)'}}>{graph.relationship_count || graph.relationships?.length || 0}</div>
                 <div className="text-xs" style={{color:'var(--text2)'}}>Relationships</div>
               </div>
             </div>
+
+            {/* Entity Type Breakdown */}
+            {graph.entities?.length > 0 && (() => {
+              const typeCounts = {};
+              const sourceCounts = {};
+              graph.entities.forEach(e => {
+                const t = e.type || 'Unknown';
+                typeCounts[t] = (typeCounts[t] || 0) + 1;
+                const s = (e.source || 'brief').split('+')[0];
+                sourceCounts[s] = (sourceCounts[s] || 0) + 1;
+              });
+              const sorted = Object.entries(typeCounts).sort((a,b) => b[1] - a[1]).slice(0, 6);
+              const sourceColors = {brief:'var(--cyan)',twitter:'#a855f7',reddit:'#f97316',social:'#3b82f6'};
+              return (
+                <>
+                <div className="flex flex-wrap gap-1.5 mt-3">
+                  {sorted.map(([type, count]) => (
+                    <span key={type} className="px-2 py-0.5 text-[10px] rounded-full flex items-center gap-1" style={{background:'var(--bg3)',border:'1px solid var(--border)',color:'var(--text2)'}}>
+                      <span className="w-1.5 h-1.5 rounded-full" style={{backgroundColor: ENTITY_COLORS[type] || ENTITY_COLORS.default}}/>
+                      {type}: {count}
+                    </span>
+                  ))}
+                </div>
+                {Object.keys(sourceCounts).length > 1 && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {Object.entries(sourceCounts).map(([src, count]) => (
+                      <span key={src} className="px-2 py-0.5 text-[10px] rounded-full flex items-center gap-1" style={{background:'var(--bg3)',border:'1px solid var(--border)',color:sourceColors[src] || 'var(--text2)'}}>
+                        {src}: {count}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                </>
+              );
+            })()}
           </div>
 
           {/* Entity Preview */}
           <div className="glass-card" style={{padding:'16px'}}>
             <h4 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{color:'var(--text2)'}}>Key Entities</h4>
             <div className="space-y-2 max-h-48 overflow-y-auto">
-              {graph.entities?.slice(0, 6).map((entity, i) => (
+              {(graph.entities || [])
+                .slice()
+                .sort((a, b) => {
+                  const imp = {High: 0, Medium: 1, Low: 2};
+                  return (imp[a.importance] ?? 2) - (imp[b.importance] ?? 2);
+                })
+                .slice(0, 8)
+                .map((entity, i) => (
                 <div key={i} className="flex items-center gap-2 p-2 rounded" style={{background:'var(--bg3)',border:'1px solid var(--border)'}}>
                   <div 
                     className="w-2 h-2 rounded-full flex-shrink-0" 
                     style={{ backgroundColor: ENTITY_COLORS[entity.type] || ENTITY_COLORS.default }}
                   />
                   <span className="text-sm font-medium truncate" style={{color:'var(--text)'}}>{entity.name}</span>
+                  {entity.importance === 'High' && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-full ml-auto flex-shrink-0" style={{background:'rgba(239,68,68,0.15)',color:'#ef4444',border:'1px solid rgba(239,68,68,0.3)'}}>HIGH</span>
+                  )}
                   <span className="text-[10px] capitalize ml-auto" style={{color:'var(--text3)'}}>{entity.type}</span>
                 </div>
               ))}
@@ -1053,7 +1134,7 @@ const UploadStep = ({ sessionId, onComplete }) => {
                         className="field"
                         value={topic}
                         onChange={(e) => setTopic(e.target.value)}
-                        placeholder="e.g., Bitcoin price, Tesla earnings, Fed interest rate decision..."
+                        placeholder="e.g., Bengal Election winner, Bitcoin price, IPL 2026, Tesla earnings..."
                       />
                       <div className="mt-3 flex flex-wrap gap-2">
                         {exampleTopics.map((t, i) => (
@@ -2020,6 +2101,9 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
 
   return (
     <div className="animate-fade-in space-y-4">
+      {/* Prediction Outcome Badge */}
+      <PredictionOutcomeBadge sessionId={sessionId} />
+
       {/* Header with Confidence */}
       <div className="bg-panel border border-sw rounded-xl p-5">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -2511,6 +2595,248 @@ const ChatPanel = ({ sessionId, agents, report }) => {
   );
 };
 
+// ── ACCURACY DASHBOARD ──────────────────────────────────────────────────────
+const AccuracyDashboard = ({ data, onClose }) => {
+  if (!data) return null;
+  const wr = data.win_rate || 0;
+  const getWrColor = (rate) => rate >= 65 ? 'var(--cyan)' : rate >= 50 ? '#eab308' : '#ef4444';
+  const wrColor = getWrColor(wr);
+
+  const getTypeLabels = (predType) => {
+    const labels = {
+      DIRECTIONAL: { UP: '\u2191 UP', DOWN: '\u2193 DOWN', FLAT: '\u2192 FLAT', UNKNOWN: '?' },
+      OUTCOME:     { YES: '\u2713 YES', NO: '\u2717 NO', PARTIAL: '~ PARTIAL', UNKNOWN: 'PENDING', PENDING: 'PENDING' },
+      SENTIMENT:   { POSITIVE: '\u2191 POSITIVE', NEGATIVE: '\u2193 NEGATIVE', MIXED: '\u2192 MIXED', UNKNOWN: 'PENDING', PENDING: 'PENDING' },
+    };
+    return labels[(predType || 'OUTCOME').toUpperCase()] || labels.OUTCOME;
+  };
+
+  return (
+    <div className="animate-fade-in space-y-4" style={{maxWidth:'1100px',margin:'0 auto'}}>
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 style={{fontFamily:'var(--display)',fontSize:'24px',fontWeight:'800',color:'var(--text)'}}>
+            Prediction Accuracy
+          </h1>
+          <p className="text-xs mt-1" style={{color:'var(--text2)',fontFamily:'var(--mono)'}}>
+            {data.total_predictions} tracked · {data.pending} pending
+          </p>
+        </div>
+        <button data-testid="accuracy-back-btn" className="btn-ghost" onClick={onClose} style={{fontSize:'13px'}}>
+          Back to Simulation
+        </button>
+      </div>
+
+      {/* Global stats row */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          { val: `${wr}%`, lab: 'Win Rate', color: wrColor },
+          { val: data.total_predictions, lab: 'Total Predictions', color: 'var(--text)' },
+          { val: data.total_correct, lab: 'Correct Calls', color: 'var(--cyan)' },
+          { val: data.pending, lab: 'Awaiting Outcome', color: '#eab308' },
+        ].map((s, i) => (
+          <div key={i} data-testid={`accuracy-stat-${i}`} className="bg-panel border border-sw rounded-xl p-4 text-center">
+            <div style={{fontFamily:'var(--mono)',fontSize:'26px',fontWeight:'700',color:s.color}}>{s.val}</div>
+            <div className="text-[10px] mt-1 uppercase tracking-wider" style={{color:'var(--text3)'}}>{s.lab}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Prediction Type breakdown */}
+      {data.type_breakdown && Object.keys(data.type_breakdown).length > 0 && (
+        <div className="flex gap-3 flex-wrap" data-testid="type-breakdown">
+          {Object.entries(data.type_breakdown).map(([type, stats]) => (
+            <div key={type} className="bg-panel border border-sw rounded-xl p-3 flex-1 min-w-[120px]">
+              <div style={{fontFamily:'var(--mono)',fontSize:'10px',color:'var(--text3)',marginBottom:'4px',textTransform:'uppercase',letterSpacing:'.04em'}}>
+                {type.toLowerCase()}
+              </div>
+              <div style={{fontFamily:'var(--mono)',fontSize:'22px',fontWeight:'700',color:getWrColor(stats.win_rate)}}>
+                {stats.win_rate}%
+              </div>
+              <div className="text-[11px]" style={{color:'var(--text3)'}}>
+                {stats.correct}/{stats.total}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Domain breakdown */}
+      {Object.keys(data.domain_breakdown).length > 0 && (
+        <div className="bg-panel border border-sw rounded-xl overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-sw" style={{background:'var(--bg3)',fontFamily:'var(--mono)',fontSize:'10px',color:'var(--text3)',textTransform:'uppercase',letterSpacing:'.06em'}}>
+            Accuracy by Domain
+          </div>
+          {Object.entries(data.domain_breakdown).map(([domain, stats]) => (
+            <div key={domain} className="flex items-center gap-3 px-4 py-3 border-b border-sw last:border-b-0">
+              <div className="w-28 text-xs capitalize" style={{color:'var(--text2)'}}>{domain.replace('_', ' ')}</div>
+              <div className="flex-1 h-2 rounded-full overflow-hidden" style={{background:'var(--bg3)'}}>
+                <div style={{width:`${stats.win_rate}%`,height:'100%',background:getWrColor(stats.win_rate),borderRadius:'4px',transition:'width .6s ease'}} />
+              </div>
+              <div style={{fontFamily:'var(--mono)',fontSize:'12px',fontWeight:'700',width:'48px',textAlign:'right',color:getWrColor(stats.win_rate)}}>{stats.win_rate}%</div>
+              <div className="text-[10px] w-14 text-right" style={{color:'var(--text3)'}}>{stats.correct}/{stats.total}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Calibration chart */}
+        {data.calibration?.length > 0 && (
+          <div className="bg-panel border border-sw rounded-xl p-4">
+            <div style={{fontFamily:'var(--mono)',fontSize:'10px',color:'var(--text3)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'10px'}}>
+              Calibration — Predicted vs Actual (%)
+            </div>
+            <div className="text-[10px] italic mb-2" style={{color:'var(--text3)'}}>Perfect = diagonal. Above = overconfident.</div>
+            {data.calibration.map((row, i) => (
+              <div key={i} className="flex items-center gap-2 mb-1.5">
+                <div style={{width:'50px',fontSize:'10px',color:'var(--text3)',fontFamily:'var(--mono)'}}>{row.bucket}</div>
+                <div className="flex-1 relative h-4 rounded" style={{background:'rgba(255,255,255,0.03)'}}>
+                  <div className="absolute inset-0 rounded" style={{width:`${row.predicted_pct}%`,background:'rgba(255,255,255,0.06)'}} />
+                  <div className="absolute top-0.5 bottom-0.5 left-0 rounded" style={{width:`${row.actual_pct}%`,background:getWrColor(row.actual_pct),transition:'width .6s ease'}} />
+                </div>
+                <div style={{fontFamily:'var(--mono)',fontSize:'11px',width:'36px',textAlign:'right',color:getWrColor(row.actual_pct)}}>{row.actual_pct}%</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Top agents */}
+        {data.top_agents?.length > 0 && (
+          <div className="bg-panel border border-sw rounded-xl p-4">
+            <div style={{fontFamily:'var(--mono)',fontSize:'10px',color:'var(--text3)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'10px'}}>
+              Top Predicting Agents
+            </div>
+            {data.top_agents.slice(0, 5).map((agent, i) => (
+              <div key={i} className="flex items-center gap-2 mb-2">
+                <div style={{fontFamily:'var(--mono)',fontSize:'10px',color:'var(--text3)',width:'16px'}}>{i + 1}</div>
+                <div className="flex-1">
+                  <div className="text-xs font-semibold" style={{color:'var(--text)'}}>{agent.agent_name}</div>
+                  <div className="text-[10px]" style={{color:'var(--text3)'}}>{agent.personality_type}</div>
+                </div>
+                <div style={{fontFamily:'var(--mono)',fontSize:'12px',fontWeight:'700',color:getWrColor(agent.win_rate)}}>{agent.win_rate}%</div>
+                <div className="text-[10px]" style={{color:'var(--text3)'}}>({agent.correct_predictions}/{agent.total_predictions})</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Recent predictions */}
+      {data.recent?.length > 0 && (
+        <div className="bg-panel border border-sw rounded-xl overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-sw" style={{background:'var(--bg3)',fontFamily:'var(--mono)',fontSize:'10px',color:'var(--text3)',textTransform:'uppercase',letterSpacing:'.06em'}}>
+            Recent Predictions
+          </div>
+          {data.recent.map((rec, i) => {
+            const typeLabels = getTypeLabels(rec.prediction_type);
+            const predLabel = typeLabels[rec.predicted_direction] || rec.predicted_direction;
+            const actLabel = typeLabels[rec.actual_direction] || (rec.actual_direction || 'pending');
+            const statusColor = rec.direction_correct ? 'var(--cyan)' : rec.status === 'pending' ? '#eab308' : '#ef4444';
+            return (
+              <div key={i} className="flex items-center gap-3 px-4 py-2.5 border-b border-sw last:border-b-0">
+                <div className="w-2 h-2 rounded-full flex-shrink-0" style={{background: statusColor}} />
+                <div className="flex-1 text-xs truncate" style={{color:'var(--text)'}}>{rec.topic || rec.domain?.replace('_',' ')}</div>
+                <div className="text-[10px] flex-shrink-0" style={{
+                  color:'var(--text3)',padding:'2px 6px',background:'rgba(255,255,255,0.05)',
+                  borderRadius:'4px',fontFamily:'var(--mono)'
+                }}>
+                  {(rec.prediction_type || 'outcome').toLowerCase()}
+                </div>
+                <div className="flex-shrink-0" style={{fontFamily:'var(--mono)',fontSize:'11px',color: rec.direction_correct ? 'var(--cyan)' : 'var(--text3)'}}>
+                  {predLabel} → {actLabel}
+                </div>
+                <div style={{fontFamily:'var(--mono)',fontSize:'11px',color:'var(--text3)',flexShrink:0}}>
+                  {rec.composite_score != null
+                    ? `${Math.round(rec.composite_score * 100)}pts`
+                    : rec.status === 'pending' ? 'awaiting' : '\u2014'}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Empty state */}
+      {data.total_predictions === 0 && (
+        <div className="bg-panel border border-sw rounded-xl p-8 text-center">
+          <Target className="w-10 h-10 mx-auto mb-3" style={{color:'var(--text3)'}} />
+          <p className="text-sm" style={{color:'var(--text2)'}}>No predictions tracked yet.</p>
+          <p className="text-xs mt-1" style={{color:'var(--text3)'}}>Complete a simulation to start tracking accuracy.</p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+
+// ── PREDICTION OUTCOME BADGE ────────────────────────────────────────────────
+const PredictionOutcomeBadge = ({ sessionId }) => {
+  const [outcome, setOutcome] = useState(null);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    const fetchOutcome = async () => {
+      try {
+        const res = await axios.get(`${API}/sessions/${sessionId}/prediction-outcome`);
+        if (res.data.status !== 'not_tracked') setOutcome(res.data);
+      } catch (e) { /* ignore */ }
+    };
+    fetchOutcome();
+    const interval = setInterval(fetchOutcome, 60000);
+    return () => clearInterval(interval);
+  }, [sessionId]);
+
+  if (!outcome) return null;
+
+  if (outcome.status === 'scored') {
+    const isCorrect = outcome.direction_correct;
+    const score = outcome.composite_score || 0;
+    return (
+      <div data-testid="prediction-outcome-badge" className="rounded-xl p-4 mb-4 flex items-center gap-3 flex-wrap" style={{
+        border: `1px solid ${isCorrect ? 'rgba(0,245,196,0.3)' : 'rgba(239,68,68,0.3)'}`,
+        background: isCorrect ? 'rgba(0,245,196,0.05)' : 'rgba(239,68,68,0.05)',
+      }}>
+        <span className="text-lg" style={{color: isCorrect ? 'var(--cyan)' : '#ef4444'}}>
+          {isCorrect ? '✓' : '✗'}
+        </span>
+        <div className="flex-1">
+          <div className="text-sm font-semibold" style={{color: isCorrect ? 'var(--cyan)' : '#ef4444'}}>
+            Prediction was {isCorrect ? 'CORRECT' : 'INCORRECT'}
+          </div>
+          <div className="text-xs mt-0.5" style={{color:'var(--text2)'}}>
+            Predicted {outcome.predicted_direction} → Actual {outcome.actual_direction || '?'}
+            {outcome.actual_price != null && ` · Price: ${outcome.actual_price.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}`}
+          </div>
+        </div>
+        <div className="text-right">
+          <div style={{fontFamily:'var(--mono)',fontSize:'20px',fontWeight:'700',
+            color: score >= 70 ? 'var(--cyan)' : score >= 40 ? '#eab308' : '#ef4444'
+          }}>{Math.round(score)}</div>
+          <div className="text-[9px]" style={{color:'var(--text3)',fontFamily:'var(--mono)'}}>SCORE / 100</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (outcome.status === 'pending') {
+    return (
+      <div data-testid="prediction-pending-badge" className="rounded-xl p-3 mb-4 flex items-center gap-2" style={{
+        border: '1px solid var(--border)', background: 'var(--bg3)'
+      }}>
+        <div className="w-2 h-2 rounded-full animate-pulse" style={{background:'#eab308'}} />
+        <span className="text-xs" style={{color:'var(--text2)'}}>
+          Prediction tracking active — outcome scored automatically at {outcome.score_at ? new Date(outcome.score_at).toLocaleString() : 'scheduled time'}
+        </span>
+      </div>
+    );
+  }
+
+  return null;
+};
+
+
 // Main App Component
 function App() {
   const [user, setUser] = useState(() => {
@@ -2531,6 +2857,18 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [grokActive, setGrokActive] = useState(false);
+  const [showAccuracy, setShowAccuracy] = useState(false);
+  const [accuracyData, setAccuracyData] = useState(null);
+
+  const loadAccuracyDashboard = async () => {
+    try {
+      const res = await axios.get(`${API}/predictions/accuracy`);
+      setAccuracyData(res.data);
+      setShowAccuracy(true);
+    } catch (e) {
+      console.error("Accuracy load failed:", e);
+    }
+  };
 
   useEffect(() => {
     setAuthToken(user?.accessToken || null);
@@ -2729,8 +3067,15 @@ function App() {
           grokActive={grokActive}
           user={user}
           onSignOut={handleSignOut}
+          onShowAccuracy={loadAccuracyDashboard}
         />
         
+        {showAccuracy ? (
+          <main style={{flex:1,padding:'24px 16px',maxWidth:'1400px',margin:'0 auto',width:'100%'}}>
+            <AccuracyDashboard data={accuracyData} onClose={() => setShowAccuracy(false)} />
+          </main>
+        ) : (
+        <>
         <StepIndicator
           currentStep={currentStep}
           completedSteps={completedSteps}
@@ -2780,6 +3125,8 @@ function App() {
             )}
           </div>
         </main>
+        </>
+        )}
 
         {/* Ticker Bar */}
         <div className="ticker-bar">

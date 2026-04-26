@@ -1,90 +1,63 @@
 # SwarmSim - Product Requirements Document
 
 ## Original Problem Statement
-Build **SwarmSim**, a highly advanced Swarm Intelligence Prediction Engine. The application allows users to run complex AI agent simulations to predict outcomes on various topics (financial, political, social). Core features include real-time web scraping, RSS news parsing, live financial data (`yfinance`), a 6-agent Orchestrator pipeline, advanced AI behaviors, a Three-Tier Population Scaling System, and a 3-Tier LLM Cost Reduction Routing Strategy.
+Build **SwarmSim**, a Swarm Intelligence Prediction Engine. Users run AI agent simulations to predict outcomes on any topic.
 
 ## Architecture
-- **Frontend**: React (monolithic App.js ~2600 lines) + Tailwind CSS + Shadcn/UI
-- **Backend**: FastAPI + MongoDB + Background Tasks
-- **LLM Integration**: Emergent Integrations Proxy (Claude Sonnet 4, Haiku 4.5, Gemini 2.5 Flash) + xAI Grok (grok-4-1-fast)
-- **Data Sources**: yfinance, Google News RSS (feedparser), web scraping, **Grok X Search (real Twitter/X)**, **Grok Web Search**
+- Frontend: React + Tailwind + Shadcn/UI | Backend: FastAPI + MongoDB + APScheduler
+- LLM: Emergent Proxy (Sonnet 4, Haiku 4.5, Gemini Flash) + xAI Grok
 
-## Core Features (All Implemented)
-1. Document upload + Live Intelligence mode with real-time data fetching
-2. Knowledge Graph extraction (entities + relationships)
-3. AI Agent generation (10-300 personas with personalities, beliefs, influence)
-4. Three-Tier Population Scaling (LLM agents, statistical clones, silent population)
-5. Multi-round social media simulation with belief dynamics
-6. Real Social Media Comment Seeding (Google News RSS + **Grok X Search**)
-7. Comprehensive prediction report with factions, risks, confidence scores
-8. PDF report download
-9. Interactive chat with agents post-simulation
-10. 3-Tier LLM Model Routing (Sonnet for premium, Haiku for fast, Gemini Flash for bulk)
-11. 12-point Cost Reduction optimizations
-12. **Grok (xAI) Integration** — Real Twitter/X data via x_search, Web intelligence via web_search
+## Completed Features
+- [x] Core 6-agent orchestrator pipeline
+- [x] Document upload + Live Intelligence mode
+- [x] GraphRAG L1+L2 (importance, tensions, per-agent retrieval)
+- [x] Graph Chunking helpers (chunk_content, merge_graph_sources, extract_from_social)
+- [x] **Universal Domain Classifier** — 16 domains, keyword + LLM fallback
+- [x] **Domain-aware agent archetypes** — occupations per domain
+- [x] **Wikipedia + HN context** — free background data enrichment
+- [x] **Non-financial scoring** — Claude-based prediction scoring for all domains
+- [x] **Diverse example topics** — 8 examples across sports, politics, crypto, tech, entertainment
+- [x] **Domain badge** — shows classified domain next to LIVE badge
+- [x] Three-Tier Population Scaling
+- [x] Multi-round simulation with per-agent GraphRAG context
+- [x] Real Social Media Seeding (Google News RSS + Grok X Search)
+- [x] Prediction reports + PDF + interactive chat
+- [x] 3-Tier LLM Cost Reduction + 12-point optimizations
+- [x] Prediction Tracking System (freeze, APScheduler scoring, accuracy dashboard)
+- [x] Cyberpunk dark theme UI
+- [x] **Universal Prediction Model** — 3-type scoring (DIRECTIONAL/OUTCOME/SENTIMENT)
+- [x] **Bug Fix: Auto-question wrapping** — build_prediction_question() respects user input
+- [x] **Bug Fix: NIFTY 50 classification** — Enhanced KEYWORD_MAP + ticker-based DIRECTIONAL override
+- [x] **Bug Fix: Wrong direction labels** — Type-aware labels (YES/NO for OUTCOME, POSITIVE/NEGATIVE for SENTIMENT)
 
-## UI Design System (Implemented Feb 2026)
-- **Theme**: Dark cyberpunk (#06080f background, #00f5c4 cyan accent)
-- **Fonts**: Space Mono (monospace), Space Grotesk (body), Syne (headings)
-- **Effects**: Canvas particle background, grid overlay, glassmorphism (backdrop-blur)
-- **Components**: Glass cards, steps bar, stats row, info sidebar, ticker bar, scan animations
-- **Badges**: "Grok Active" (violet), "System Online" (cyan)
+## Prediction Type Mapping
+- DIRECTIONAL: financial, crypto, macro, real_estate (UP/DOWN/FLAT)
+- OUTCOME: political, sports, business, science, legal, health, general (YES/NO/PARTIAL)
+- SENTIMENT: technology, entertainment, geopolitical, social, media (POSITIVE/NEGATIVE/MIXED)
 
-## Grok Integration (Feb 2026)
-- **SDK**: xai-sdk v1.11.0, model grok-4-1-fast
-- **XAI_API_KEY** stored in backend/.env
-- **fetch_grok_twitter()**: Uses x_search tool for real tweets — no Twitter API needed
-- **fetch_grok_web_intel()**: Uses web_search tool for real-time intelligence briefs
-- **Fallback**: Gracefully falls back to Nitter/RSS + Claude if Grok is unavailable
-- **Frontend**: "Grok Active" badge in header, "Powered by Grok X Search" in social seed, Grok X Intelligence Brief display
+## Speed Optimizations
+- Intel Agent: Haiku (was Sonnet) — 10s vs 30s
+- Graph Agent: Haiku single-pass — 12s vs 60s+ timeouts
+- Agent Generation: Haiku (was Sonnet) — faster persona creation
+- Report Generation: Sonnet (kept for quality)
+- Total pipeline: ~30-35s (was 60-90s)
 
-## Completed Tasks
-- [x] Core backend pipeline (6 agents + orchestrator)
-- [x] Document upload + graph extraction
-- [x] Live Intelligence mode (yfinance + web scraping)
-- [x] Agent generation with personality types
-- [x] Population scaling (3-tier)
-- [x] Multi-round simulation
-- [x] Real Social Media Comment Seeding
-- [x] Prediction reports + PDF download
-- [x] Interactive agent chat
-- [x] 3-Tier LLM Cost Reduction (Sonnet/Haiku/Gemini)
-- [x] 12-point cost optimization spec
-- [x] UI Redesign — Cyberpunk dark theme with glassmorphism (Feb 2026)
-- [x] **Grok (xAI) Integration** — Real Twitter + Web Intel (Feb 2026)
-
-## Backlog (Prioritized)
-### P1 - Upcoming
+## Backlog
+### P1
 - Session history to resume previous simulations
-- Graph zoom/pan controls for knowledge graph
+- Graph zoom/pan controls
 
-### P2 - Future
-- Entity search/filter in knowledge graph
-- Progress percentage during long operations
-- Agent memory persistence across sessions
-- Refactor App.js into separate components (~2600 lines)
+### P2
+- Entity search/filter, progress %, App.js refactor, agent memory persistence
 
-### P3 - Nice to Have
-- Custom agent creation
-- Simulation templates
-- Shareable links
+### P3
+- Custom agent creation, simulation templates, shareable links
 
-## Known Issues
-- LLM Budget Exhaustion: If Emergent Universal Key balance is low, simulations will fail with 400 errors. User needs to top up via Profile > Universal Key > Add Balance.
-
-## Key API Endpoints
-- GET /api/health — Returns grok_available, twitter_source
-- POST /api/sessions — Create session
-- POST /api/sessions/{id}/fetch-live — Fetch live data (+ Grok web intel + Grok Twitter seed)
-- POST /api/sessions/{id}/fetch-social-seed — Fetch social seed data (Grok x_search first, fallback to Nitter)
-- POST /api/sessions/{id}/generate-agents — Generate AI agents
-- POST /api/sessions/{id}/configure-population — Configure population tiers
-- POST /api/sessions/{id}/simulate — Run simulation
-- POST /api/sessions/{id}/extend — Extend simulation rounds
-- GET /api/sessions/{id}/report/pdf — Download PDF report
+## Known Constraints
+- OOM: Do NOT re-enable chunk_and_extract concurrency
+- Timeout: Do NOT revert Graph/Intel agents to Sonnet 4
+- Indian indices: yfinance requires multiple ticker variant fallbacks
+- Legacy predictions in DB have old domain/direction values (pre-bugfix)
 
 ## 3rd Party Integrations
-- Emergent Integrations Proxy: Claude Sonnet 4, Haiku 4.5, Gemini 2.5 Flash (via EMERGENT_LLM_KEY)
-- xAI Grok: grok-4-1-fast (via XAI_API_KEY, xai-sdk)
-- Google News RSS: feedparser (no key)
-- yfinance: no key
+- Emergent Proxy (EMERGENT_LLM_KEY), xAI Grok (XAI_API_KEY), yfinance, feedparser, APScheduler

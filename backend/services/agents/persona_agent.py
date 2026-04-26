@@ -1,7 +1,8 @@
-"""Persona Agent - Generates diverse AI agent personas with demographic + ideological diversity."""
+"""Persona Agent - Generates diverse AI agent personas with GraphRAG-enhanced context."""
 import json
 import logging
 from collections import Counter
+from services.agents.graph_agent import build_agent_generation_context
 
 logger = logging.getLogger(__name__)
 
@@ -10,11 +11,21 @@ ALL_TYPES = ["Skeptic", "Optimist", "Insider", "Contrarian", "Expert", "Neutral"
 
 CATEGORY_GUIDANCE = {
     "financial": "Include: financial analysts, retail investors, institutional traders, economists, financial journalists, fintech founders",
+    "crypto": "Include: crypto traders, DeFi developers, blockchain analysts, VCs, crypto journalists, skeptics, regulators",
     "political": "Include: political analysts, voters from different demographics, campaign strategists, journalists, activists, lobbyists",
     "geopolitical": "Include: foreign policy experts, military analysts, diplomats, regional specialists, journalists, affected citizens",
     "sports": "Include: sports analysts, fans, coaches, former players, sports journalists, betting analysts",
+    "technology": "Include: tech analysts, startup founders, engineers, VCs, tech journalists, early adopters, skeptics",
     "tech": "Include: tech analysts, startup founders, engineers, VCs, tech journalists, early adopters, skeptics",
+    "entertainment": "Include: film critics, industry insiders, fans, producers, entertainment journalists, box office analysts",
+    "business": "Include: business analysts, executives, investors, startup founders, management consultants, industry journalists",
+    "science": "Include: research scientists, science journalists, policy experts, pharma analysts, patient advocates",
+    "social": "Include: cultural critics, influencers, activists, everyday people, researchers, sociologists, journalists",
     "social_cultural": "Include: cultural critics, influencers, activists, everyday people, researchers, journalists",
+    "legal": "Include: lawyers, legal analysts, judges, activists, journalists, compliance officers, affected parties",
+    "macro": "Include: macroeconomists, central bank watchers, bond traders, policy analysts, business owners",
+    "health": "Include: doctors, health policy experts, epidemiologists, pharma analysts, patients, nurses, health journalists",
+    "real_estate": "Include: real estate agents, developers, urban planners, property investors, housing policy experts, home buyers",
 }
 
 
@@ -23,26 +34,26 @@ async def run(graph: dict, prediction_query: str, num_agents: int,
               call_claude_fn) -> list:
     """Generate diverse agent personas based on the knowledge graph."""
 
-    entities_summary = json.dumps([
-        {"name": e["name"], "type": e["type"]}
-        for e in graph.get("entities", [])[:20]
-    ])
+    # Build enhanced GraphRAG context for agent generation
+    graph_context = build_agent_generation_context(graph, num_agents)
     guidance = CATEGORY_GUIDANCE.get(topic_category, "Include diverse perspectives from various backgrounds")
 
     system_prompt = """You are a simulation designer. Create realistic agent personas for a social prediction simulation. Respond ONLY with valid JSON, no markdown fences."""
 
-    user_prompt = f"""World: {graph.get('summary', '')[:800]}
-Themes: {', '.join(graph.get('themes', []))}
+    user_prompt = f"""{graph_context}
+
+Category guidance: {guidance}
 Prediction: {prediction_query}
+{intel_context}
 
 Generate exactly {num_agents} diverse agents. For each provide ONLY:
-- name (realistic full name)
+- name (realistic full name matching cultural context)
 - age (18-70)
-- occupation (specific job title)
-- background (one sentence, unique to this person)
+- occupation (specific job title — use the entities above for inspiration)
+- background (one sentence referencing actual entities from the graph)
 - personality_type (choose: Skeptic/Optimist/Insider/Contrarian/Expert/Neutral/Activist/Pragmatist)
 - influence_level (1-10)
-- initial_stance (one sentence, their position on the topic)
+- initial_stance (1-2 sentences referencing SPECIFIC entity names and tensions from the graph)
 - avatar_emoji (single relevant emoji)
 
 DO NOT write communication_style or platform_preference — derived from personality_type.
@@ -86,7 +97,7 @@ Return JSON:
 {{
   "agents": [
     {{
-      "id": "agent_rebalance_{i+1}",
+      "id": "agent_rebalance_N",
       "name": "Full Name",
       "avatar_emoji": "single emoji",
       "age": 35,

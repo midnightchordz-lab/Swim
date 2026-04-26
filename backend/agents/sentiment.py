@@ -93,3 +93,39 @@ def sentiment_label(text: str, threshold: float = 0.15) -> str:
     if valence < -threshold:
         return "negative"
     return "neutral"
+
+
+def score_text_valence(text: str) -> float:
+    """Compatibility wrapper for callers using the older sentiment API."""
+    return sentiment_valence(text)
+
+
+def score_text(text: str) -> dict:
+    """Compatibility wrapper returning both valence and label."""
+    valence = sentiment_valence(text)
+    return {"valence": valence, "label": sentiment_label(text)}
+
+
+def classify_sentiment(text: str, threshold: float = 0.15) -> str:
+    """Compatibility wrapper for callers using the older sentiment API."""
+    return sentiment_label(text, threshold)
+
+
+def aggregate_sentiment(posts) -> dict:
+    """Summarize sentiment labels and mean valence for a collection of posts."""
+    counts = {"positive": 0, "negative": 0, "neutral": 0}
+    valences = []
+
+    for post in posts or []:
+        text = post.get("content", "") if isinstance(post, dict) else str(post)
+        label = classify_sentiment(text)
+        counts[label] += 1
+        valences.append(score_text_valence(text))
+
+    total = len(valences)
+    return {
+        "counts": counts,
+        "total": total,
+        "mean_valence": round(sum(valences) / total, 3) if total else 0.0,
+        "dominant_sentiment": max(counts, key=counts.get) if total else "neutral",
+    }

@@ -15,6 +15,10 @@ import {
 import PredictionQualityPanel from "./components/PredictionQualityPanel";
 import ProgressStatusCard from "./components/ProgressStatusCard";
 import SimulationFeed from "./components/SimulationFeed";
+import LandingOnboarding from "./components/LandingOnboarding";
+import ScenarioTemplates from "./components/ScenarioTemplates";
+import SimulationReplayTimeline from "./components/SimulationReplayTimeline";
+import GodViewInjectionPanel from "./components/GodViewInjectionPanel";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -469,6 +473,7 @@ const UploadStep = ({ sessionId, onComplete }) => {
   const [seedLoading, setSeedLoading] = useState(false);
   const [grokStatus, setGrokStatus] = useState(null);
   const [liveProgress, setLiveProgress] = useState(null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState(null);
 
   const addLog = (message, type = "info") => {
     const time = new Date().toLocaleTimeString('en-US', { hour12: false });
@@ -512,6 +517,15 @@ const UploadStep = ({ sessionId, onComplete }) => {
       addLog(`File selected: ${e.dataTransfer.files[0].name}`, "success");
     }
   }, []);
+
+  const handleTemplateSelect = (template) => {
+    setMode("live");
+    setTopic(template.topic);
+    setHorizon(template.horizon);
+    setQuery(template.query);
+    setSelectedTemplateId(template.id);
+    addLog(`Scenario template loaded: ${template.title}`, "success");
+  };
 
   const handleUploadSubmit = async () => {
     if (!file || !query.trim()) return;
@@ -898,6 +912,12 @@ const UploadStep = ({ sessionId, onComplete }) => {
 
   return (
     <div className="max-w-6xl mx-auto px-4">
+      <LandingOnboarding onStart={() => document.querySelector('[data-testid="mode-live"]')?.scrollIntoView({ behavior: "smooth", block: "center" })} />
+      <ScenarioTemplates
+        selectedId={selectedTemplateId}
+        onSelect={handleTemplateSelect}
+      />
+
       {/* Stats Row */}
       <div className="stats-row">
         {[
@@ -1594,7 +1614,7 @@ const PostCard = ({ post, isReply }) => (
 );
 
 // Simulation View Component
-const SimulationView = ({ sessionId, agents, onComplete }) => {
+const SimulationView = ({ sessionId, agents, onComplete, onPostsUpdated }) => {
   const [numRounds, setNumRounds] = useState(3);
   const [simulating, setSimulating] = useState(false);
   const [status, setStatus] = useState(null);
@@ -1602,6 +1622,7 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
   const [error, setError] = useState(null);
   const [logs, setLogs] = useState([]);
   const [simMeta, setSimMeta] = useState(null);
+  const [injectionRefreshKey, setInjectionRefreshKey] = useState(0);
   const twitterFeedRef = useRef(null);
   const redditFeedRef = useRef(null);
 
@@ -1655,6 +1676,7 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
           });
         }
         setPosts(postsRes.data.posts);
+        onPostsUpdated?.(postsRes.data.posts);
 
         if (statusRes.data.status === "simulation_done") {
           addLog("Simulation complete!", "success");
@@ -1670,7 +1692,7 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
     }, 2500);
 
     return () => clearInterval(interval);
-  }, [simulating, sessionId, posts.length]);
+  }, [simulating, sessionId, posts.length, onPostsUpdated]);
 
   useEffect(() => {
     if (twitterFeedRef.current) {
@@ -1845,7 +1867,27 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
       <SystemDashboard logs={logs} />
 
       {isDone && (
-        <div className="space-y-2">
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <GodViewInjectionPanel
+              apiBase={API}
+              sessionId={sessionId}
+              onInjected={async () => {
+                const [statusRes, postsRes] = await Promise.all([
+                  axios.get(`${API}/sessions/${sessionId}/simulation-status`),
+                  axios.get(`${API}/sessions/${sessionId}/posts`),
+                ]);
+                setStatus(statusRes.data);
+                setPosts(postsRes.data.posts);
+                onPostsUpdated?.(postsRes.data.posts);
+                addLog("Injected variable rounds complete", "success");
+              }}
+            />
+            <SimulationReplayTimeline
+              posts={posts}
+              narratives={simMeta?.roundNarratives || []}
+            />
+          </div>
           <button
             data-testid="generate-report-button"
             onClick={() => onComplete(posts)}
@@ -2581,6 +2623,10 @@ function App() {
     }
   };
 
+  const handlePostsUpdated = useCallback((updatedPosts) => {
+    setPosts(updatedPosts);
+  }, []);
+
   if (loading) {
     return (
       <div style={{minHeight:'100vh',background:'var(--bg)',position:'relative',overflow:'hidden'}}>
@@ -2678,6 +2724,7 @@ function App() {
                 sessionId={sessionId}
                 agents={agents}
                 onComplete={(data) => handleStepComplete(3, data)}
+                onPostsUpdated={setPosts}
               />
             )}
             

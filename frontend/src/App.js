@@ -13,6 +13,8 @@ import {
   ResponsiveContainer, CartesianGrid,
 } from "recharts";
 import PredictionQualityPanel from "./components/PredictionQualityPanel";
+import ProgressStatusCard from "./components/ProgressStatusCard";
+import SimulationFeed from "./components/SimulationFeed";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -466,6 +468,7 @@ const UploadStep = ({ sessionId, onComplete }) => {
   const [socialSeed, setSocialSeed] = useState(null);
   const [seedLoading, setSeedLoading] = useState(false);
   const [grokStatus, setGrokStatus] = useState(null);
+  const [liveProgress, setLiveProgress] = useState(null);
 
   const addLog = (message, type = "info") => {
     const time = new Date().toLocaleTimeString('en-US', { hour12: false });
@@ -514,6 +517,7 @@ const UploadStep = ({ sessionId, onComplete }) => {
     if (!file || !query.trim()) return;
     setLoading(true);
     setError(null);
+    setLiveProgress(null);
     addLog("Starting document processing...");
 
     const formData = new FormData();
@@ -541,6 +545,12 @@ const UploadStep = ({ sessionId, onComplete }) => {
     if (!topic.trim()) return;
     setLoading(true);
     setError(null);
+    setLiveProgress({
+      progress: "Starting live intelligence fetch...",
+      progress_step: 0,
+      progress_total: 5,
+      status: "fetching",
+    });
     addLog(`Fetching live data for: ${topic}...`);
     addLog(`Prediction horizon: ${horizon}`);
 
@@ -557,6 +567,12 @@ const UploadStep = ({ sessionId, onComplete }) => {
         try {
           const statusRes = await axios.get(`${API}/sessions/${sessionId}/live-status`, { timeout: 10000 });
           const data = statusRes.data;
+          setLiveProgress({
+            progress: data.progress || "Fetching live intelligence...",
+            progress_step: data.progress_step || 0,
+            progress_total: data.progress_total || 5,
+            status: data.status,
+          });
           
           // Show progress messages in the log
           if (data.progress && data.status === "fetching") {
@@ -569,12 +585,19 @@ const UploadStep = ({ sessionId, onComplete }) => {
             addLog(`Found ${data.graph?.relationships?.length || 0} relationships`, "success");
             setGraph(data.graph);
             setIntelBrief(data.intel_brief);
+            setLiveProgress({
+              progress: "Live intelligence complete",
+              progress_step: data.progress_total || 5,
+              progress_total: data.progress_total || 5,
+              status: "completed",
+            });
             setLoading(false);
           } else if (data.status === "failed") {
             clearInterval(pollInterval);
             const errMsg = data.error || "Live fetch failed";
             addLog(`Error: ${errMsg}`, "error");
             setError(errMsg);
+            setLiveProgress(prev => ({ ...(prev || {}), status: "failed", progress: errMsg }));
             setLoading(false);
           }
         } catch (pollErr) {
@@ -587,6 +610,7 @@ const UploadStep = ({ sessionId, onComplete }) => {
         clearInterval(pollInterval);
         if (!graph) {
           setError("Live intelligence fetch is taking too long. Please try again.");
+          setLiveProgress(prev => ({ ...(prev || {}), status: "failed", progress: "Live intelligence fetch timed out" }));
           setLoading(false);
         }
       }, 180000);
@@ -595,6 +619,7 @@ const UploadStep = ({ sessionId, onComplete }) => {
       const errorMsg = err.response?.data?.detail || "Failed to start live fetch";
       addLog(`Error: ${errorMsg}`, "error");
       setError(errorMsg);
+      setLiveProgress(prev => ({ ...(prev || {}), status: "failed", progress: errorMsg }));
       setLoading(false);
     }
   };
@@ -1159,6 +1184,19 @@ const UploadStep = ({ sessionId, onComplete }) => {
                     )}
                   </button>
                 </div>
+
+                {liveProgress && (
+                  <div style={{padding:'0 20px 20px'}}>
+                    <ProgressStatusCard
+                      title="Live Intelligence Progress"
+                      subtitle={liveProgress.progress}
+                      detail={error}
+                      current={liveProgress.progress_step}
+                      total={liveProgress.progress_total}
+                      status={liveProgress.status === "completed" ? "done" : liveProgress.status === "failed" ? "error" : "running"}
+                    />
+                  </div>
+                )}
               </>
             )}
 
@@ -1731,21 +1769,15 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
 
   return (
     <div className="animate-fade-in space-y-4">
-      {/* Progress Bar */}
-      <div className="bg-panel border border-sw rounded-lg p-3">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-sm text-sw2">
-            {isDone ? "Simulation Complete" : `Round ${status?.current_round || 0} of ${status?.total_rounds || numRounds}`}
-          </span>
-          <span className="text-sm text-sw-cyan mono font-bold">{posts.length} posts</span>
-        </div>
-        <div className="h-2 bg-sw-bg3 rounded-full overflow-hidden">
-          <div
-            className="h-full bg-sw-cyan transition-all duration-500"
-            style={{ width: `${((status?.current_round || 0) / (status?.total_rounds || numRounds)) * 100}%` }}
-          />
-        </div>
-      </div>
+      <ProgressStatusCard
+        title={isDone ? "Simulation Complete" : "Simulation Running"}
+        subtitle={isDone ? "All rounds completed" : `Round ${status?.current_round || 0} of ${status?.total_rounds || numRounds}`}
+        detail={error || (simMeta?.populationSize ? `${simMeta.populationSize.toLocaleString()} population members represented` : "Generating and polling posts in real time")}
+        current={status?.current_round || 0}
+        total={status?.total_rounds || numRounds}
+        countLabel={`${posts.length} posts`}
+        status={error ? "error" : isDone ? "done" : "running"}
+      />
 
       {/* AI Enhancement Panels */}
       {simMeta && (
@@ -1792,49 +1824,22 @@ const SimulationView = ({ sessionId, agents, onComplete }) => {
 
       {/* Dual Feed Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Twitter Feed */}
-        <div className="flex flex-col h-[500px] border border-sw rounded-xl bg-panel overflow-hidden">
-          <div className="px-3 py-2 border-b border-sw flex items-center justify-between bg-sw-bg2">
-            <div className="flex items-center gap-2">
-              <Twitter className="w-4 h-4 text-sw-cyan" />
-              <span className="font-semibold text-sw text-sm">Twitter Feed</span>
-            </div>
-            <span className="text-[10px] text-sw3">{twitterPosts.length} posts</span>
-          </div>
-          <div ref={twitterFeedRef} className="flex-1 overflow-y-auto p-3 space-y-2">
-            {twitterPosts.map((post, i) => (
-              <PostCard key={i} post={post} isReply={post.post_type === "reply"} />
-            ))}
-            {!isDone && twitterPosts.length === 0 && (
-              <div className="flex items-center justify-center h-full text-sw3 text-sm">
-                <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                Waiting for posts...
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Reddit Feed */}
-        <div className="flex flex-col h-[500px] border border-sw rounded-xl bg-panel overflow-hidden">
-          <div className="px-3 py-2 border-b border-sw flex items-center justify-between bg-sw-bg2">
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center text-sw text-[10px] font-bold">R</div>
-              <span className="font-semibold text-sw text-sm">Reddit Feed</span>
-            </div>
-            <span className="text-[10px] text-sw3">{redditPosts.length} posts</span>
-          </div>
-          <div ref={redditFeedRef} className="flex-1 overflow-y-auto p-3 space-y-2">
-            {redditPosts.map((post, i) => (
-              <PostCard key={i} post={post} isReply={post.post_type === "reply"} />
-            ))}
-            {!isDone && redditPosts.length === 0 && (
-              <div className="flex items-center justify-center h-full text-sw3 text-sm">
-                <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                Waiting for posts...
-              </div>
-            )}
-          </div>
-        </div>
+        <SimulationFeed
+          title="Twitter Feed"
+          icon={<Twitter className="w-4 h-4 text-sw-cyan" />}
+          posts={twitterPosts}
+          feedRef={twitterFeedRef}
+          isDone={isDone}
+          renderPost={(post, i) => <PostCard key={i} post={post} isReply={post.post_type === "reply"} />}
+        />
+        <SimulationFeed
+          title="Reddit Feed"
+          icon={<div className="w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center text-sw text-[10px] font-bold">R</div>}
+          posts={redditPosts}
+          feedRef={redditFeedRef}
+          isDone={isDone}
+          renderPost={(post, i) => <PostCard key={i} post={post} isReply={post.post_type === "reply"} />}
+        />
       </div>
 
       <SystemDashboard logs={logs} />

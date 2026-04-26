@@ -3,10 +3,10 @@ import axios from "axios";
 import ForceGraph2D from "react-force-graph-2d";
 import {
   Upload, FileText, Users, Play, BarChart3, MessageSquare,
-  CheckCircle, Loader2, ArrowRight, Send, AlertCircle,
+  Loader2, ArrowRight, Send, AlertCircle,
   Twitter, ChevronRight, Zap, Target, TrendingUp, AlertTriangle,
   Download, RefreshCw, Eye, EyeOff, Settings, Terminal,
-  Globe, Radio, Clock, Wifi, PlusCircle, Sparkles, Shield
+  Globe, Radio, Clock, Wifi, Shield
 } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip as ReTooltip,
@@ -21,6 +21,8 @@ import SimulationReplayTimeline from "./components/SimulationReplayTimeline";
 import GodViewInjectionPanel from "./components/GodViewInjectionPanel";
 import EnsembleForecastPanel from "./components/EnsembleForecastPanel";
 import EvidenceLedgerPanel from "./components/EvidenceLedgerPanel";
+import AuthLandingGate from "./components/AuthLandingGate";
+import ParticleBackground from "./components/ParticleBackground";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -70,68 +72,6 @@ const SkeletonGrid = ({ count = 4 }) => (
     ))}
   </div>
 );
-
-// Canvas Particle Background
-const ParticleBackground = () => {
-  useEffect(() => {
-    const canvas = document.getElementById('bg-canvas');
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    let W, H, particles = [], animId;
-    const CYAN = '0,245,196';
-
-    const resize = () => {
-      W = canvas.width = window.innerWidth;
-      H = canvas.height = window.innerHeight;
-    };
-
-    const init = () => {
-      particles = [];
-      const n = Math.floor((W * H) / 22000);
-      for (let i = 0; i < n; i++) {
-        particles.push({
-          x: Math.random() * W, y: Math.random() * H,
-          vx: (Math.random() - 0.5) * 0.3,
-          vy: (Math.random() - 0.5) * 0.3,
-          r: Math.random() * 1.4 + 0.4,
-          alpha: Math.random() * 0.5 + 0.15
-        });
-      }
-    };
-
-    const draw = () => {
-      ctx.clearRect(0, 0, W, H);
-      for (let i = 0; i < particles.length; i++) {
-        const p = particles[i];
-        p.x += p.vx; p.y += p.vy;
-        if (p.x < 0) p.x = W; if (p.x > W) p.x = 0;
-        if (p.y < 0) p.y = H; if (p.y > H) p.y = 0;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(${CYAN},${p.alpha})`;
-        ctx.fill();
-        for (let j = i + 1; j < particles.length; j++) {
-          const q = particles[j];
-          const dx = p.x - q.x, dy = p.y - q.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist < 90) {
-            ctx.beginPath();
-            ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y);
-            ctx.strokeStyle = `rgba(${CYAN},${0.07 * (1 - dist / 90)})`;
-            ctx.lineWidth = 0.5; ctx.stroke();
-          }
-        }
-      }
-      animId = requestAnimationFrame(draw);
-    };
-
-    resize(); init(); draw();
-    const onResize = () => { resize(); init(); };
-    window.addEventListener('resize', onResize);
-    return () => { cancelAnimationFrame(animId); window.removeEventListener('resize', onResize); };
-  }, []);
-  return null;
-};
 
 // Entity type colors
 const ENTITY_COLORS = {
@@ -222,7 +162,7 @@ const SentimentChart = ({ posts }) => {
   );
 };
 
-const Header = ({ onNewSimulation, hasSession, grokActive }) => (
+const Header = ({ onNewSimulation, hasSession, grokActive, user, onSignOut }) => (
   <header className="app-header">
     <div className="logo-wrap">
       <div className="logo-icon-box">
@@ -253,6 +193,11 @@ const Header = ({ onNewSimulation, hasSession, grokActive }) => (
         </span>
       )}
       <span className="badge-live" data-testid="system-status">System Online</span>
+      {user && (
+        <span className="hidden sm:inline-flex text-xs px-2 py-1 rounded-full border border-sw text-sw2">
+          {user.name || user.email}
+        </span>
+      )}
       {hasSession && (
         <button
           data-testid="new-simulation-button"
@@ -260,6 +205,15 @@ const Header = ({ onNewSimulation, hasSession, grokActive }) => (
           className="btn-ghost"
         >
           + New Simulation
+        </button>
+      )}
+      {user && (
+        <button
+          data-testid="signout-button"
+          onClick={onSignOut}
+          className="btn-ghost"
+        >
+          Sign Out
         </button>
       )}
     </div>
@@ -2551,6 +2505,14 @@ const ChatPanel = ({ sessionId, agents, report }) => {
 
 // Main App Component
 function App() {
+  const [user, setUser] = useState(() => {
+    try {
+      const stored = window.localStorage.getItem("swarmsim_user");
+      return stored ? JSON.parse(stored) : null;
+    } catch (error) {
+      return null;
+    }
+  });
   const [sessionId, setSessionId] = useState(null);
   const [currentStep, setCurrentStep] = useState(1);
   const [completedSteps, setCompletedSteps] = useState([]);
@@ -2589,8 +2551,30 @@ function App() {
   };
 
   useEffect(() => {
-    createNewSession();
-  }, []);
+    if (user) {
+      createNewSession();
+    } else {
+      setLoading(false);
+    }
+  }, [user]);
+
+  const handleSignIn = (profile) => {
+    window.localStorage.setItem("swarmsim_user", JSON.stringify(profile));
+    setUser(profile);
+  };
+
+  const handleSignOut = () => {
+    window.localStorage.removeItem("swarmsim_user");
+    setUser(null);
+    setSessionId(null);
+    setCurrentStep(1);
+    setCompletedSteps([]);
+    setGraph(null);
+    setAgents(null);
+    setPosts(null);
+    setReport(null);
+    setError(null);
+  };
 
   const handleNewSimulation = () => {
     if (window.confirm("Start a new simulation? All current progress will be lost.")) {
@@ -2632,6 +2616,10 @@ function App() {
   const handlePostsUpdated = useCallback((updatedPosts) => {
     setPosts(updatedPosts);
   }, []);
+
+  if (!user) {
+    return <AuthLandingGate onSignIn={handleSignIn} />;
+  }
 
   if (loading) {
     return (
@@ -2700,7 +2688,13 @@ function App() {
       <div className="grid-overlay" />
       <ParticleBackground />
       <div className="app-shell">
-        <Header onNewSimulation={handleNewSimulation} hasSession={!!sessionId} grokActive={grokActive} />
+        <Header
+          onNewSimulation={handleNewSimulation}
+          hasSession={!!sessionId}
+          grokActive={grokActive}
+          user={user}
+          onSignOut={handleSignOut}
+        />
         
         <StepIndicator
           currentStep={currentStep}

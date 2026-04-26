@@ -121,15 +121,22 @@ backend:
 frontend:
   - task: "Import latest GitHub main frontend and verify private-beta auth landing"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/src/App.js, frontend/src/components/AuthLandingGate.jsx"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
       - working: "NA"
         agent: "main"
         comment: "Downloaded latest main archive from midnightchordz-lab/Swim, overlaid frontend while preserving frontend/.env, installed dependencies with yarn, and restarted frontend. Need frontend verification that the initial page is the private-beta sign-in landing and no static/js/main.4efc86c3.js bundle is served."
+      - working: "NA"
+        agent: "main"
+        comment: "User explicitly approved frontend verification. Frontend tester should verify the first page shows the private-beta sign-in landing screen and that the old static/js/main.4efc86c3.js bundle is not served."
+      - working: true
+        agent: "testing"
+        comment: "Frontend verification PASSED. All three checks confirmed: (1) Landing page correctly displays private-beta sign-in with 'Private Beta' badge, 'Sign in to start simulating' heading, sign-in form with email/password fields, and 'Enter SwarmSim' button. (2) Old bundle static/js/main.4efc86c3.js is NOT served during page load - only bundle.js is loaded. Direct access to old bundle path returns HTML (index.html fallback), not JavaScript, confirming the old bundle file doesn't exist. (3) No console errors blocking the landing page. The imported latest main SwarmSim frontend is working correctly."
+
 metadata:
   created_by: "main_agent"
   version: "1.0"
@@ -147,3 +154,5 @@ agent_communication:
     message: "Latest main archive was imported via GitHub tarball, not git write operations. Protected .git, .emergent, backend/.env, frontend/.env, and test_result.md were preserved. Services restarted and are running. Backend tester should verify /api/auth/me status/body. Frontend tester should verify private-beta sign-in landing and absence of old main.4efc86c3.js bundle."
   - agent: "testing"
     message: "Backend testing completed successfully. Auth endpoint verification passed - GET /api/auth/me returns HTTP 401 with JSON detail 'Authentication required' (not 404). Service health check confirmed backend is running properly on https://predict.preview.emergentagent.com/api. The imported latest main backend is working correctly."
+  - agent: "testing"
+    message: "Frontend testing completed successfully. All verification checks passed: (1) Private-beta sign-in landing page renders correctly with all expected elements (Private Beta badge, sign-in form, main heading). (2) Old bundle main.4efc86c3.js is NOT loaded during normal page navigation - only bundle.js is served. Old bundle path returns HTML fallback, confirming file doesn't exist. (3) No blocking console errors. Both backend and frontend import verification complete - ready for user acceptance."

@@ -50,6 +50,7 @@ load_dotenv(ROOT_DIR / '.env')
 
 # Import LLM integration
 from emergentintegrations.llm.chat import LlmChat, UserMessage
+from services.topic import TOPIC_CATEGORIES, detect_topic_category
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
@@ -122,25 +123,6 @@ PREDICTION_HORIZONS = [
     "Next 6 months",
     "Long term (1+ year)"
 ]
-
-# Topic categories for agent customization
-TOPIC_CATEGORIES = {
-    "financial": ["stock", "market", "crypto", "bitcoin", "trading", "investment", "economy", "fed", "interest rate", "inflation"],
-    "political": ["election", "vote", "congress", "senate", "president", "policy", "law", "democrat", "republican", "legislation"],
-    "geopolitical": ["war", "conflict", "military", "treaty", "sanctions", "diplomacy", "nato", "un", "border"],
-    "sports": ["game", "match", "championship", "player", "team", "league", "score", "tournament", "coach"],
-    "tech": ["ai", "startup", "tech", "software", "app", "launch", "product", "innovation", "company"],
-    "social_cultural": ["trend", "viral", "culture", "social", "celebrity", "movement", "protest"]
-}
-
-def detect_topic_category(topic: str) -> str:
-    """Detect the category of a topic for agent customization"""
-    topic_lower = topic.lower()
-    for category, keywords in TOPIC_CATEGORIES.items():
-        if any(kw in topic_lower for kw in keywords):
-            return category
-    return "general"
-
 
 # Personality templates — reduce LLM token usage for agent generation
 PERSONALITY_TEMPLATES = {
@@ -281,6 +263,153 @@ def clean_json_response(text: str) -> str:
     text = re.sub(r'```json\s*', '', text)
     text = re.sub(r'```\s*', '', text)
     return text.strip()
+
+
+def parse_llm_json(text: str, fallback: Any = None, label: str = "LLM JSON") -> Any:
+    """Parse JSON from LLM output, including common extra prose around the JSON."""
+    cleaned = clean_json_response(text or "")
+    candidates = [cleaned]
+
+    first_array, last_array = cleaned.find("["), cleaned.rfind("]")
+    if first_array != -1 and last_array > first_array:
+        candidates.append(cleaned[first_array:last_array + 1])
+
+    first_obj, last_obj = cleaned.find("{"), cleaned.rfind("}")
+    if first_obj != -1 and last_obj > first_obj:
+        candidates.append(cleaned[first_obj:last_obj + 1])
+
+    for candidate in candidates:
+        try:
+            return json.loads(candidate)
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    logger.warning("[%s] Could not parse JSON; using fallback", label)
+    return fallback
+
+
+def build_fallback_post(agent: dict, query: str, round_num: int, num_rounds: int) -> str:
+    """Create a deterministic in-character post when a bulk LLM batch fails."""
+    stance = agent.get("initial_stance", "I am watching for stronger evidence.")
+    style = agent.get("personality_type", "Neutral").lower()
+    prefix = {
+        "skeptic": "I am not convinced yet:",
+        "optimist": "There is still upside here:",
+        "contrarian": "Counterpoint:",
+        "expert": "The signal I would track:",
+        "activist": "People should not ignore this:",
+        "pragmatist": "Practical read:",
+        "insider": "What matters behind the scenes:",
+    }.get(style, "My read:")
+    content = f"{prefix} {stance[:140]} For {query}, round {round_num}/{num_rounds} still depends on fresh evidence."
+    if agent.get("platform_preference") == "Twitter" and len(content) > 260:
+        content = content[:257].rsplit(" ", 1)[0] + "..."
+    return content
+
+
+def build_post_document(agent: dict, session_id: str, round_num: int, content: str,
+                        hub_ids: set, post_type: str = "post", platform: str = None,
+                        reply_to: str = None, fallback: bool = False) -> dict:
+    """Normalize simulation post documents across LLM and fallback generation paths."""
+    post = {
+        "session_id": session_id,
+        "round": round_num,
+        "agent_id": agent["id"],
+        "agent_name": agent["name"],
+        "agent_emoji": agent.get("avatar_emoji", ""),
+        "platform": platform or agent.get("platform_preference", "Twitter"),
+        "content": content,
+        "post_type": post_type,
+        "is_hub_post": agent["id"] in hub_ids,
+        "influence_level": agent.get("influence_level", 5),
+        "belief_position": agent.get("belief_state", {}).get("position", 0.0),
+        "emotional_valence": agent.get("emotional_state", {}).get("valence", 0.0),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    if reply_to:
+        post["reply_to"] = reply_to
+    if fallback:
+        post["generation_fallback"] = True
+    return post
+
+
+def build_report_quality_metadata(session: dict, posts: list, stock_data: list, report: dict) -> dict:
+    """Summarize uncertainty, evidence freshness, and simulation reliability for the report."""
+    total_posts = len(posts)
+    real_posts = sum(1 for post in posts if post.get("is_real"))
+    fallback_posts = sum(1 for post in posts if post.get("generation_fallback"))
+    simulated_posts = max(0, total_posts - real_posts)
+    fallback_rate = round(fallback_posts / simulated_posts, 3) if simulated_posts else 0.0
+    source_count = len(session.get("social_seed_sources", []) or [])
+    has_live_intel = bool(session.get("intel_brief"))
+    has_real_sentiment = bool(session.get("social_seed_sentiment", {}).get("total_comments_analysed", 0))
+    confidence_score = report.get("prediction", {}).get("confidence_score", 0.5) or 0.5
+
+    evidence_score = 0.25
+    evidence_score += 0.20 if has_live_intel else 0
+    evidence_score += min(0.20, total_posts / 500)
+    evidence_score += 0.15 if stock_data else 0
+    evidence_score += 0.10 if has_real_sentiment else 0
+    evidence_score += min(0.10, source_count * 0.03)
+    evidence_score -= min(0.20, fallback_rate * 0.5)
+    evidence_score = max(0.05, min(1.0, evidence_score))
+
+    if evidence_score >= 0.75:
+        evidence_strength = "strong"
+    elif evidence_score >= 0.45:
+        evidence_strength = "moderate"
+    else:
+        evidence_strength = "limited"
+
+    uncertainty = max(0.05, min(0.45, (1 - evidence_score) * 0.35 + fallback_rate * 0.15))
+    lower = max(0.0, confidence_score - uncertainty)
+    upper = min(1.0, confidence_score + uncertainty)
+
+    caveats = [
+        "Scenario simulation output; not a calibrated statistical forecast.",
+        "LLM-generated agent behavior may amplify prompt or source framing.",
+    ]
+    if fallback_posts:
+        caveats.append(f"{fallback_posts} simulated posts used deterministic fallbacks after LLM parse failures.")
+    if not has_real_sentiment:
+        caveats.append("No real social seed sentiment was available for calibration.")
+    if not stock_data and detect_topic_category(session.get("topic") or session.get("prediction_query", "")) == "financial":
+        caveats.append("No live market data was resolved for this financial topic.")
+
+    latest_inputs = [
+        ts for ts in [
+            session.get("live_fetched_at"),
+            session.get("updated_at"),
+        ]
+        if ts
+    ]
+    for item in stock_data or []:
+        if item.get("fetched_at"):
+            latest_inputs.append(item["fetched_at"])
+
+    return {
+        "evidence_strength": evidence_strength,
+        "evidence_score": round(evidence_score, 2),
+        "confidence_interval": {
+            "low": round(lower, 2),
+            "high": round(upper, 2),
+        },
+        "uncertainty": round(uncertainty, 2),
+        "data_freshness": {
+            "latest_input_at": max(latest_inputs) if latest_inputs else None,
+            "live_intel": has_live_intel,
+            "market_data_points": len(stock_data or []),
+            "real_social_sources": session.get("social_seed_sources", []) or [],
+        },
+        "simulation_reliability": {
+            "total_posts": total_posts,
+            "simulated_posts": simulated_posts,
+            "real_seed_posts": real_posts,
+            "fallback_posts": fallback_posts,
+            "fallback_rate": fallback_rate,
+        },
+        "caveats": caveats,
+    }
 
 
 # ─── Social Media Fetchers ────────────────────────────────────────────
@@ -2015,10 +2144,14 @@ Return JSON array ONLY:
 
                 try:
                     response = await call_gemini_flash(system_prompt, user_prompt, max_tokens=600)
-                    cleaned = clean_json_response(response)
-                    posts_data = json.loads(cleaned)
+                    posts_data = parse_llm_json(response, fallback=[], label=f"simulation round {round_num} posts")
+                    if not isinstance(posts_data, list):
+                        logger.warning("[Sim] Non-list post JSON in round %s; using fallbacks", round_num)
+                        posts_data = []
 
                     for item in posts_data:
+                        if not isinstance(item, dict):
+                            continue
                         idx = item.get("agent_index", 1) - 1
                         if 0 <= idx < len(batch):
                             agent = batch[idx]
@@ -2028,21 +2161,7 @@ Return JSON array ONLY:
                             if agent.get("platform_preference") == "Twitter" and len(content) > 300:
                                 content = content[:280].rsplit(" ", 1)[0] + "..."
 
-                            post = {
-                                "session_id": session_id,
-                                "round": round_num,
-                                "agent_id": agent["id"],
-                                "agent_name": agent["name"],
-                                "agent_emoji": agent.get("avatar_emoji", ""),
-                                "platform": agent.get("platform_preference", "Twitter"),
-                                "content": content,
-                                "post_type": "post",
-                                "is_hub_post": agent["id"] in hub_ids,
-                                "influence_level": agent.get("influence_level", 5),
-                                "belief_position": agent.get("belief_state", {}).get("position", 0.0),
-                                "emotional_valence": agent.get("emotional_state", {}).get("valence", 0.0),
-                                "created_at": datetime.now(timezone.utc).isoformat()
-                            }
+                            post = build_post_document(agent, session_id, round_num, content, hub_ids)
                             await db.sim_posts.insert_one(post)
                             all_posts.append(post)
                             round_posts.append(post)
@@ -2050,7 +2169,19 @@ Return JSON array ONLY:
                                                [f"Round {round_num}: I posted: {content[:80]}"]
                 except Exception as e:
                     logger.error(f"[Sim] Batch error round {round_num}: {e}")
-                    continue
+                    posts_data = []
+
+                posted_ids = {post.get("agent_id") for post in round_posts if post.get("round") == round_num}
+                for agent in batch:
+                    if agent["id"] in posted_ids:
+                        continue
+                    content = build_fallback_post(agent, query, round_num, num_rounds)
+                    post = build_post_document(agent, session_id, round_num, content, hub_ids, fallback=True)
+                    await db.sim_posts.insert_one(post)
+                    all_posts.append(post)
+                    round_posts.append(post)
+                    agent["memories"] = agent.get("memories", [])[-9:] + \
+                                       [f"Round {round_num}: I fallback-posted: {content[:80]}"]
 
                 await asyncio.sleep(1.0)
 
@@ -2078,32 +2209,24 @@ Return JSON array ONLY:
 
                     try:
                         response = await call_gemini_flash(system_prompt, user_prompt, max_tokens=200)
-                        cleaned = clean_json_response(response)
-                        replies_data = json.loads(cleaned)
+                        replies_data = parse_llm_json(response, fallback=[], label=f"simulation round {round_num} replies")
+                        if not isinstance(replies_data, list):
+                            replies_data = []
 
                         for item in replies_data:
+                            if not isinstance(item, dict):
+                                continue
                             idx = item.get("agent_index", 1) - 1
                             if 0 <= idx < len(reply_pairs):
                                 agent, target_post = reply_pairs[idx]
                                 reply_content = item.get("content", "").strip()
                                 if not reply_content:
                                     continue
-                                reply = {
-                                    "session_id": session_id,
-                                    "round": round_num,
-                                    "agent_id": agent["id"],
-                                    "agent_name": agent["name"],
-                                    "agent_emoji": agent.get("avatar_emoji", ""),
-                                    "platform": target_post["platform"],
-                                    "content": reply_content,
-                                    "post_type": "reply",
-                                    "reply_to": target_post["agent_name"],
-                                    "is_hub_post": agent["id"] in hub_ids,
-                                    "influence_level": agent.get("influence_level", 5),
-                                    "belief_position": agent.get("belief_state", {}).get("position", 0.0),
-                                    "emotional_valence": agent.get("emotional_state", {}).get("valence", 0.0),
-                                    "created_at": datetime.now(timezone.utc).isoformat()
-                                }
+                                reply = build_post_document(
+                                    agent, session_id, round_num, reply_content, hub_ids,
+                                    post_type="reply", platform=target_post["platform"],
+                                    reply_to=target_post["agent_name"],
+                                )
                                 await db.sim_posts.insert_one(reply)
                                 all_posts.append(reply)
                                 round_posts.append(reply)
@@ -2111,6 +2234,7 @@ Return JSON array ONLY:
                         logger.error(f"[Sim] Batched reply error: {e}")
 
             # Tier 2: Generate clone echo posts
+            echo_posts = []
             if clones:
                 parent_posts_map = {}
                 for p in round_posts:
@@ -2389,7 +2513,9 @@ Return JSON with ONLY these fields:
 
     try:
         r1 = await call_claude_fast(phase1_system, phase1_prompt, max_tokens=500)
-        phase1 = json.loads(clean_json_response(r1))
+        phase1 = parse_llm_json(r1, fallback=None, label="report phase 1")
+        if not isinstance(phase1, dict):
+            raise ValueError("Phase 1 did not return a JSON object")
     except Exception as e:
         logger.error(f"Report phase 1 failed: {e}")
         raise HTTPException(status_code=500, detail=f"Report phase 1 failed: {str(e)}")
@@ -2423,7 +2549,9 @@ Return JSON with ONLY these fields:
 
     try:
         r2 = await call_claude_premium(phase2_system, phase2_prompt, max_tokens=1200)
-        phase2 = json.loads(clean_json_response(r2))
+        phase2 = parse_llm_json(r2, fallback={}, label="report phase 2")
+        if not isinstance(phase2, dict):
+            phase2 = {}
     except Exception as e:
         logger.error(f"Report phase 2 failed: {e}")
         phase2 = {}
@@ -2441,6 +2569,13 @@ Return JSON with ONLY these fields:
     # Attach live stock data to report for frontend + PDF
     if stock_data:
         report["stock_data"] = stock_data
+
+    report["prediction_quality"] = build_report_quality_metadata(
+        session=session,
+        posts=posts,
+        stock_data=stock_data,
+        report=report,
+    )
 
     # Add real vs simulated sentiment comparison if social seed exists
     real_sentiment = session.get("social_seed_sentiment")

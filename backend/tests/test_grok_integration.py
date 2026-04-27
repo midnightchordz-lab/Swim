@@ -1,5 +1,5 @@
 """
-Test suite for Grok (xAI) integration in SwarmSim
+Test suite for Grok (xAI) integration in Predicta
 Tests health endpoint, session creation, and Grok availability
 """
 import pytest

@@ -1,5 +1,5 @@
 """
-Test suite for SwarmSim tiered LLM model strategy (iteration 7)
+Test suite for Predicta tiered LLM model strategy (iteration 7)
 Tests: Session creation, live fetch, agent generation, simulation, report, chat
 Model tiers: Premium (Sonnet 4), Fast (Haiku 4.5), Flash (Gemini 2.5 Flash)
 """

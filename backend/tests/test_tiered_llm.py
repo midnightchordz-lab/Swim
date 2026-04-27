@@ -1,5 +1,5 @@
 """
-Test suite for SwarmSim Tiered LLM Strategy
+Test suite for Predicta Tiered LLM Strategy
 Tests the three-tier model system: Premium (Sonnet 4), Fast (Haiku 4.5), Flash (Gemini 2.5 Flash Lite)
 """
 import pytest

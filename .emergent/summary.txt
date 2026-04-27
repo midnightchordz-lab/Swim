@@ -1,5 +1,5 @@
 <analysis>**original_problem_statement**: 
-The user is building **SwarmSim**, a highly advanced Swarm Intelligence Prediction Engine. The application allows users to run complex AI agent simulations to predict outcomes on various topics (financial, political, social). Core features include real-time web scraping, RSS news parsing, live financial data (), a 6-agent Orchestrator pipeline, a 3-Tier LLM Cost Reduction Routing Strategy, Grok real-time X/Twitter data integration, and a Stock Prediction Engine. 
+The user is building **Predicta**, a highly advanced evidence-aware prediction engine. The application allows users to run complex AI agent simulations to predict outcomes on various topics (financial, political, social). Core features include real-time web scraping, RSS news parsing, live financial data (), a 6-agent Orchestrator pipeline, a 3-Tier LLM Cost Reduction Routing Strategy, Grok real-time X/Twitter data integration, and a Stock Prediction Engine.
 
 PRODUCT REQUIREMENTS: Implement continuous upgrades to prediction tracking, GraphRAG extraction, and universal domain classification to improve simulation accuracy and speed.
 
@@ -106,9 +106,9 @@ React, FastAPI, APScheduler (Background scoring),  (Stock metrics with retry fal
 3. System Review: Memory Limit exceeded... (Resolved - agent disabled concurrent chunking)
 4. System Review: Memory Limit exceeded... (Resolved)
 5. System Review: Memory Limit exceeded... (Resolved)
-6. work on txt (Uploaded: SwarmSim_UniversalPrediction.txt) (Done)
+6. work on txt (Uploaded: Predicta_UniversalPrediction.txt) (Done)
 7. Fix two bugs in prediction scoring causing UNKNOWN results... (Done)
-8. txt implement (Uploaded: SwarmSim_UniversalPredictionModel.txt) - **PENDING (Extract complete, implementation not started)**
+8. txt implement (Uploaded: Predicta_UniversalPredictionModel.txt) - **PENDING (Extract complete, implementation not started)**
 
 **Project Health Check:**
 Healthy. Both Frontend and Backend compiled successfully. 

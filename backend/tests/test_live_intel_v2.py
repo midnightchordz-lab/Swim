@@ -1,5 +1,5 @@
 """
-Backend tests for SwarmSim Live Intelligence feature v2
+Backend tests for Predicta Live Intelligence feature v2
 Tests the updated /fetch-live endpoint (202 background task) and /live-status polling
 """
 import pytest

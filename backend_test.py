@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-SwarmSim Backend API Testing Suite
-Tests all API endpoints for the Swarm Intelligence Prediction Engine
+Predicta Backend API Testing Suite
+Tests all API endpoints for the Evidence-Aware Prediction Engine
 """
 
 import requests
@@ -12,7 +12,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-class SwarmSimAPITester:
+class PredictaAPITester:
     def __init__(self, base_url="https://swarm-predict-2.preview.emergentagent.com"):
         self.base_url = base_url
         self.api_url = f"{base_url}/api"
@@ -419,7 +419,7 @@ class SwarmSimAPITester:
 
     def run_all_tests(self):
         """Run all API tests in sequence"""
-        print("🚀 Starting SwarmSim Backend API Tests")
+        print("🚀 Starting Predicta Backend API Tests")
         print(f"Testing against: {self.base_url}")
         print("=" * 60)
         
@@ -469,7 +469,7 @@ class SwarmSimAPITester:
 
 def main():
     """Main test runner"""
-    tester = SwarmSimAPITester()
+    tester = PredictaAPITester()
     success = tester.run_all_tests()
     return 0 if success else 1
 

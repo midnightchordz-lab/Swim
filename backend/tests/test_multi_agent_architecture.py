@@ -1,5 +1,5 @@
 """
-Backend tests for SwarmSim Multi-Agent Architecture
+Backend tests for Predicta Multi-Agent Architecture
 Tests the 6 specialist agents (Intel, Graph, Persona, SimDirector, Critic, Report) 
 coordinated by the Orchestrator.
 

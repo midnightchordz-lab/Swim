@@ -1,5 +1,5 @@
 """
-Pytest configuration for SwarmSim backend tests.
+Pytest configuration for Predicta backend tests.
 Adds backend directory to Python path for module imports.
 """
 import sys

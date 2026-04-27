@@ -1,5 +1,5 @@
 """
-Test suite for SwarmSim Prediction Tracking System
+Test suite for Predicta Prediction Tracking System
 Tests: freeze_prediction, score_pending_predictions, score_single_prediction,
        /api/predictions/accuracy, /api/sessions/{session_id}/prediction-outcome,
        /api/predictions/score-now/{session_id}, APScheduler startup

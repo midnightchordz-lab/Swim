@@ -1,5 +1,5 @@
 """
-Test suite for SwarmSim AI Enhancements:
+Test suite for Predicta AI Enhancements:
 - Belief tracking (initialise_beliefs, update_beliefs, get_belief_summary)
 - Emotional contagion (initialise_emotions, spread_emotions, get_emotional_temperature)
 - Network effects (assign_network_properties, get_network_stats)

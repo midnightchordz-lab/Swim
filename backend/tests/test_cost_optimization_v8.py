@@ -1,5 +1,5 @@
 """
-Test suite for SwarmSim 12-change cost optimization (iteration 8)
+Test suite for Predicta 12-change cost optimization (iteration 8)
 Tests all 12 changes:
 1. Three-tier model helpers (Sonnet 4, Haiku 4.5, Gemini 2.5 Flash)
 2. All LLM calls reassigned to correct tiers

@@ -2136,7 +2136,7 @@ const ReportView = ({ sessionId, posts, onComplete }) => {
       <EvidenceLedgerPanel ledger={report.evidence_ledger} />
 
       {/* Live Stock Data */}
-      {report.stock_data && report.stock_data.length > 0 && (
+      {['financial', 'crypto', 'macro', 'real_estate'].includes((report.domain || '').toLowerCase()) && report.stock_data && report.stock_data.length > 0 && (
         <div data-testid="stock-data-section" className="glass-card" style={{padding:'16px'}}>
           <h3 className="text-sm font-bold mb-3" style={{color:'var(--text)',fontFamily:'var(--display)'}}>
             Live Market Data

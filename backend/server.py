@@ -236,6 +236,11 @@ PREDICTION_HORIZONS = [
     "Long term (1+ year)"
 ]
 
+# Domains where financial ticker resolution and market technical analysis are valid.
+# Sports/entertainment/political outcome questions must never receive stock-data prompts.
+FINANCIAL_MARKET_DOMAINS = {"financial", "crypto", "macro", "real_estate"}
+
+
 # ── UNIVERSAL DOMAIN CLASSIFIER (16 domains) ──────────────────────────────────
 UNIVERSAL_DOMAINS = {
     "financial": "Stock markets, indices, commodities, forex, ETFs",
@@ -1341,7 +1346,11 @@ async def resolve_ticker(query: str, graph: dict) -> list:
             found.append({"name": name.title(), "ticker": ticker, "exchange": exchange})
 
     # Strategy 2: explicit CAPS ticker patterns
-    skip_words = {"NIFTY","NSE","BSE","FII","DII","IPO","RBI","GDP","CPI","RSI","EMA","SMA","ATH","ATL","ETF"}
+    skip_words = {
+        "NIFTY", "NSE", "BSE", "FII", "DII", "IPO", "RBI", "GDP", "CPI", "RSI", "EMA", "SMA", "ATH", "ATL", "ETF",
+        # Sports/tournament acronyms are not tradable intent in outcome questions.
+        "IPL", "BCCI", "ICC", "FIFA", "UEFA", "NBA", "NFL", "EPL", "PSL", "WPL",
+    }
     cap_patterns = re.findall(r'\b([A-Z]{2,10}(?:\.NS|\.BO|\.L)?)\b', query)
     loop = asyncio.get_running_loop()
     for pattern in cap_patterns:
@@ -1549,33 +1558,159 @@ PREDICTION RULES:
     return "\n".join(lines)
 
 
+def is_market_domain(domain: str) -> bool:
+    """Return True only for domains where stock/price technical analysis is relevant."""
+    return (domain or "").lower() in FINANCIAL_MARKET_DOMAINS
 
-async def fetch_web_data(topic: str, horizon: str, session_id: str = None) -> dict:
-    """Fetch live web data for a topic using DuckDuckGo search (5-8 queries covering multiple angles)"""
+
+def get_session_domain(session: dict, fallback_query: str = "") -> str:
+    """Resolve the stored domain, falling back to topic keyword detection."""
+    domain = (session.get("domain") or "").lower().strip()
+    if domain:
+        return domain
+    source = session.get("topic") or fallback_query or session.get("prediction_query", "")
+    return detect_topic_category(source)
+
+
+def build_domain_report_guidance(domain: str) -> str:
+    """Domain-specific guardrails for report generation prompts."""
+    if is_market_domain(domain):
+        return (
+            "This is a market/price prediction. If live stock/market data is provided, use exact prices, "
+            "support/resistance, RSI, and trend signals."
+        )
+    if domain == "sports":
+        return (
+            "This is a SPORTS OUTCOME prediction. Predict the likely winner/team outcome and discuss sports factors: "
+            "team form, squad balance, injuries, venues, matchups, schedule, coaching, and tournament momentum. "
+            "NEVER mention stock prices, share prices, tickers, support/resistance levels, RSI, moving averages, or market-data targets."
+        )
+    return (
+        "This is a non-market prediction. Keep the answer outcome/sentiment/event-based for the domain. "
+        "NEVER mention stock prices, share prices, tickers, support/resistance levels, RSI, moving averages, or market-data targets."
+    )
+
+
+def scrub_non_market_text(text: str, domain: str, topic: str = "") -> str:
+    """Remove legacy stock-market leakage from stored non-market report text."""
+    if not text or is_market_domain(domain):
+        return text
+
+    leak_patterns = [
+        r"stock\s+price", r"share\s+price", r"\bticker\b", r"\bRSI\b", r"\bMA\d+\b",
+        r"moving\s+average", r"resistance", r"support\s+at\s+(?:Rs|₹|\$|INR|USD)",
+        r"target\s+(?:resistance|support|price)", r"(?:Rs|₹|INR|USD|\$)\s*\d+(?:\.\d+)?",
+    ]
+    leak_re = re.compile("|".join(leak_patterns), re.IGNORECASE)
+
+    # Split on sentence boundaries and semicolons so useful first clauses like
+    # "IPL winner will emerge from frontrunners" survive while price clauses are removed.
+    parts = re.split(r"(?<=[.!?])\s+|;\s*", text)
+    cleaned = [part.strip() for part in parts if part.strip() and not leak_re.search(part)]
+    result = " ".join(cleaned).strip()
+    if result:
+        return result
+
+    if domain == "sports":
+        label = topic or "this sports event"
+        return (
+            f"{label} should be evaluated as a team outcome prediction using squad strength, recent form, injuries, "
+            "venue conditions, matchups, and tournament momentum."
+        )
+    return text
+
+
+def sanitize_non_market_report(report: dict, session: dict) -> dict:
+    """Remove stock-data artifacts from non-market reports, including legacy stored reports."""
+    if not isinstance(report, dict):
+        return report
+
+    domain = (report.get("domain") or get_session_domain(session, session.get("prediction_query", "")) or "general").lower()
+    report["domain"] = domain
+    if is_market_domain(domain):
+        return report
+
+    report.pop("stock_data", None)
+
+    prediction = report.get("prediction")
+    if isinstance(prediction, dict):
+        prediction["outcome"] = scrub_non_market_text(
+            prediction.get("outcome", ""), domain, session.get("topic") or session.get("prediction_query", "")
+        )
+
+    quality = report.get("prediction_quality")
+    if isinstance(quality, dict):
+        freshness = quality.get("freshness")
+        if isinstance(freshness, dict):
+            freshness["market_data_points"] = 0
+        drivers = quality.get("evidence_drivers")
+        if isinstance(drivers, list):
+            quality["evidence_drivers"] = [
+                driver for driver in drivers
+                if "market" not in str(driver.get("source", driver.get("name", ""))).lower()
+            ]
+
+    ledger = report.get("evidence_ledger")
+    if isinstance(ledger, list):
+        report["evidence_ledger"] = [
+            item for item in ledger
+            if item.get("category") != "market_data"
+            and "market" not in str(item.get("source", "")).lower()
+            and "ticker" not in str(item.get("source", "")).lower()
+        ]
+
+    return report
+
+
+
+async def fetch_web_data(topic: str, horizon: str, session_id: str = None, domain: str = "general") -> dict:
+    """Fetch live web data with domain-aware search angles."""
     import urllib.parse
-    
-    # 5-8 searches covering: latest news, expert analysis, data/statistics, sentiment signals
-    search_queries = [
-        f"{topic} latest news today {horizon}",
-        f"{topic} breaking news last 48 hours",
-        f"{topic} expert analysis opinion forecast",
-        f"{topic} statistics data numbers 2025 2026",
-        f"{topic} public sentiment reaction social media",
-        f"{topic} key stakeholders positions decisions",
-        f"{topic} risks challenges outlook",
-        f"{topic} market impact economic implications",
-    ]
-    
-    progress_steps = [
-        "Searching latest news...",
-        "Searching breaking developments...",
-        "Pulling expert analysis...",
-        "Pulling data & statistics...",
-        "Scanning sentiment signals...",
-        "Identifying key stakeholders...",
-        "Assessing risks & challenges...",
-        "Gathering market implications...",
-    ]
+
+    domain = (domain or "general").lower()
+    if domain == "sports":
+        search_queries = [
+            f"{topic} latest sports news today {horizon}",
+            f"{topic} teams squad players injuries schedule",
+            f"{topic} expert analysis winner prediction",
+            f"{topic} tournament form standings fixtures 2025 2026",
+            f"{topic} fan sentiment team chances",
+            f"{topic} key teams coaches captains venues",
+            f"{topic} risks injuries availability matchups",
+            f"{topic} historical performance head to head",
+        ]
+        progress_steps = [
+            "Searching latest sports news...",
+            "Checking squads, players & injuries...",
+            "Pulling expert winner analysis...",
+            "Pulling tournament form & fixtures...",
+            "Scanning fan sentiment signals...",
+            "Identifying key teams and stakeholders...",
+            "Assessing injuries, availability & matchups...",
+            "Gathering historical performance...",
+        ]
+    else:
+        # 5-8 searches covering: latest news, expert analysis, data/statistics, sentiment signals
+        search_queries = [
+            f"{topic} latest news today {horizon}",
+            f"{topic} breaking news last 48 hours",
+            f"{topic} expert analysis opinion forecast",
+            f"{topic} statistics data numbers 2025 2026",
+            f"{topic} public sentiment reaction social media",
+            f"{topic} key stakeholders positions decisions",
+            f"{topic} risks challenges outlook",
+            f"{topic} market impact economic implications" if is_market_domain(domain) else f"{topic} implications outlook",
+        ]
+        progress_steps = [
+            "Searching latest news...",
+            "Searching breaking developments...",
+            "Pulling expert analysis...",
+            "Pulling data & statistics...",
+            "Scanning sentiment signals...",
+            "Identifying key stakeholders...",
+            "Assessing risks & challenges...",
+            "Gathering implications & outlook...",
+        ]
     
     all_results = []
     
@@ -2018,7 +2153,7 @@ async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_q
         logger.info(f"News headlines fetched: {len(yahoo_headlines.splitlines())} items")
 
         # Fetch web search data (8 queries with progress tracking)
-        web_data = await fetch_web_data(topic, horizon, session_id=session_id)
+        web_data = await fetch_web_data(topic, horizon, session_id=session_id, domain=domain)
 
         # Also try Grok web intel in parallel (enhances the brief)
         grok_web_result = await fetch_grok_web_intel(topic, horizon)
@@ -3131,15 +3266,26 @@ async def generate_report(session_id: str):
         for a in agents[:20]
     ])
 
-    # ── STEP 0: Resolve tickers + fetch live market data ──
-    tickers = await resolve_ticker(query, graph)
-    stock_data = await fetch_stock_data_for_prediction(tickers) if tickers else []
-    market_context = build_market_context(stock_data) if stock_data else ""
-    logger.info(f"[Report] Stock data for {len(stock_data)} tickers injected into report prompt")
+    domain = get_session_domain(session, query)
+    domain_guidance = build_domain_report_guidance(domain)
+
+    # ── STEP 0: Resolve tickers + fetch live market data only for market domains ──
+    if is_market_domain(domain):
+        tickers = await resolve_ticker(query, graph)
+        stock_data = await fetch_stock_data_for_prediction(tickers) if tickers else []
+        market_context = build_market_context(stock_data) if stock_data else ""
+        logger.info(f"[Report] Domain={domain}; stock data for {len(stock_data)} ticker(s) injected into report prompt")
+    else:
+        tickers = []
+        stock_data = []
+        market_context = ""
+        logger.info(f"[Report] Domain={domain}; skipped market data injection for non-market prediction")
 
     # ── PHASE 1 — fast core report (Haiku, small) ──
     phase1_system = "You are a prediction analyst. Return ONLY valid JSON, no markdown."
     phase1_prompt = f"""Prediction: {query}
+Domain: {domain}
+Guidance: {domain_guidance}
 Context: {graph.get('summary','')}
 {market_context}
 Agents ({len(agents)}):
@@ -3149,9 +3295,9 @@ Simulation ({session.get('total_rounds',3)} rounds):
 
 Return JSON with ONLY these fields:
 {{
-  "executive_summary": "3 sentences. If stock data provided, cite exact prices and technical signals.",
+  "executive_summary": "3 sentences grounded in the domain guidance. For sports, discuss teams and match/tournament factors only.",
   "prediction": {{
-    "outcome": "one sentence with specific price targets if stock data available",
+    "outcome": "one sentence answering the prediction directly. For sports, name likely winner/team outcome; do not include stock or price language.",
     "confidence": "High|Medium|Low",
     "confidence_score": 0.65,
     "timeframe": "e.g. next month"
@@ -3176,6 +3322,8 @@ Return JSON with ONLY these fields:
     # ── PHASE 2 — deep analysis (Sonnet, medium) ──
     phase2_system = "You are a senior analyst. Return ONLY valid JSON, no markdown."
     phase2_prompt = f"""Prediction: {query}
+Domain: {domain}
+Guidance: {domain_guidance}
 {market_context}
 Simulation transcript:
 {transcript}
@@ -3218,11 +3366,12 @@ Return JSON with ONLY these fields:
         }
     }
     report.update({k: v for k, v in phase2.items() if k != "key_factions"})
+    report["domain"] = domain
     report["opinion_landscape"] = normalize_percentage_landscape(report.get("opinion_landscape", {}))
     normalize_alternative_scenarios(report)
 
-    # Attach live stock data to report for frontend + PDF
-    if stock_data:
+    # Attach live stock data to report for frontend + PDF only for market domains
+    if stock_data and is_market_domain(domain):
         report["stock_data"] = stock_data
 
     report["prediction_quality"] = build_report_quality_metadata(
@@ -3234,9 +3383,10 @@ Return JSON with ONLY these fields:
     calibrate_report_confidence(report)
     report["ensemble_forecast"] = build_ensemble_forecast(posts, report)
     report["evidence_ledger"] = build_evidence_ledger(session, graph, posts, stock_data, report)
+    report = sanitize_non_market_report(report, session)
     # Inject domain from session into report (LLM output doesn't include it)
     if not report.get("domain"):
-        report["domain"] = session.get("domain", "general")
+        report["domain"] = domain
 
     # Add real vs simulated sentiment comparison if social seed exists
     real_sentiment = session.get("social_seed_sentiment")
@@ -3291,7 +3441,14 @@ async def get_report(session_id: str):
     if not session.get("report_json"):
         raise HTTPException(status_code=404, detail="Report not generated yet")
     
-    return json.loads(session["report_json"])
+    report = json.loads(session["report_json"])
+    sanitized = sanitize_non_market_report(report, session)
+    if sanitized != report:
+        await db.sessions.update_one(
+            {"id": session_id},
+            {"$set": {"report_json": json.dumps(sanitized), "updated_at": datetime.now(timezone.utc).isoformat()}}
+        )
+    return sanitized
 
 
 # ── PREDICTION TRACKING ──────────────────────────────────────────────────────
@@ -3538,11 +3695,12 @@ async def freeze_prediction(session_id: str, report: dict, session: dict):
 
         pred_type = DOMAIN_PREDICTION_TYPE.get(domain, "OUTCOME")
 
-        # Override: if tickers found, always use DIRECTIONAL
-        if tickers and pred_type != "DIRECTIONAL":
+        # Override to DIRECTIONAL only for market domains with valid tickers.
+        # Sports acronyms like IPL must remain OUTCOME predictions.
+        if tickers and is_market_domain(domain) and pred_type != "DIRECTIONAL":
             logger.info(
                 f"[Track] Overriding pred_type {pred_type} -> DIRECTIONAL "
-                f"because tickers found: {tickers}"
+                f"because market-domain tickers found: {tickers}"
             )
             pred_type = "DIRECTIONAL"
 
@@ -4053,7 +4211,7 @@ async def download_report_pdf(session_id: str):
     if not session.get("report_json"):
         raise HTTPException(status_code=404, detail="Report not generated yet")
     
-    report = json.loads(session["report_json"])
+    report = sanitize_non_market_report(json.loads(session["report_json"]), session)
     query = session.get("prediction_query", "N/A")
     
     def safe_text(text, max_len=800):
@@ -4340,7 +4498,7 @@ Topic: {query}
 Stay completely in character. Be opinionated. 2-4 sentences per reply. Do not reveal you are an AI."""
         
     else:  # report agent
-        report = json.loads(session.get("report_json", "{}"))
+        report = sanitize_non_market_report(json.loads(session.get("report_json", "{}")), session)
         report_summary = json.dumps(report, indent=2)[:2000]  # Truncate for context
         
         system_prompt = f"""You are the SwarmSim ReportAgent — an expert analyst who completed a multi-agent social simulation.

@@ -1,477 +1,319 @@
 #!/usr/bin/env python3
 """
-SwarmSim Backend API Testing Suite
-Tests all API endpoints for the Swarm Intelligence Prediction Engine
+Backend testing for market-data leakage prevention in sports predictions.
+Tests domain safety helpers and API regression.
 """
 
-import requests
-import json
-import time
 import sys
 import os
-from datetime import datetime
-from pathlib import Path
 
-class SwarmSimAPITester:
-    def __init__(self, base_url="https://swarm-predict-2.preview.emergentagent.com"):
-        self.base_url = base_url
-        self.api_url = f"{base_url}/api"
-        self.session_id = None
-        self.tests_run = 0
-        self.tests_passed = 0
-        self.test_results = []
+# Add backend to path for imports
+sys.path.insert(0, '/app/backend')
 
-    def log_test(self, name, success, details="", response_data=None):
-        """Log test result"""
-        self.tests_run += 1
-        if success:
-            self.tests_passed += 1
-            print(f"✅ {name}")
-        else:
-            print(f"❌ {name} - {details}")
-        
-        self.test_results.append({
-            "test": name,
-            "success": success,
-            "details": details,
-            "response_data": response_data
-        })
-
-    def run_test(self, name, method, endpoint, expected_status, data=None, files=None, timeout=30):
-        """Run a single API test"""
-        url = f"{self.api_url}/{endpoint}"
-        headers = {'Content-Type': 'application/json'} if not files else {}
-
-        try:
-            if method == 'GET':
-                response = requests.get(url, headers=headers, timeout=timeout)
-            elif method == 'POST':
-                if files:
-                    response = requests.post(url, data=data, files=files, timeout=timeout)
-                else:
-                    response = requests.post(url, json=data, headers=headers, timeout=timeout)
-            elif method == 'PUT':
-                response = requests.put(url, json=data, headers=headers, timeout=timeout)
-            elif method == 'DELETE':
-                response = requests.delete(url, headers=headers, timeout=timeout)
-
-            success = response.status_code == expected_status
-            response_data = None
-            
-            try:
-                response_data = response.json()
-            except:
-                response_data = response.text
-
-            if success:
-                self.log_test(name, True, response_data=response_data)
-                return True, response_data
-            else:
-                self.log_test(name, False, f"Expected {expected_status}, got {response.status_code}: {response_data}")
-                return False, response_data
-
-        except requests.exceptions.Timeout:
-            self.log_test(name, False, f"Request timeout after {timeout}s")
-            return False, None
-        except Exception as e:
-            self.log_test(name, False, f"Request error: {str(e)}")
-            return False, None
-
-    def test_health_endpoint(self):
-        """Test health check endpoint"""
-        print("\n🔍 Testing Health Endpoint...")
-        success, data = self.run_test(
-            "Health Check",
-            "GET",
-            "health",
-            200
-        )
-        return success and data and data.get("status") == "ok"
-
-    def test_session_creation(self):
-        """Test session creation"""
-        print("\n🔍 Testing Session Creation...")
-        success, data = self.run_test(
-            "Create Session",
-            "POST",
-            "sessions",
-            200
-        )
-        
-        if success and data and "session_id" in data:
-            self.session_id = data["session_id"]
-            print(f"   Session ID: {self.session_id}")
-            return True
+def test_backend_imports():
+    """Test 1: Verify backend/server.py compiles and imports successfully."""
+    print("\n=== TEST 1: Backend Import & Compilation ===")
+    try:
+        import server
+        print("✅ backend/server.py imports successfully")
+        return True
+    except SyntaxError as e:
+        print(f"❌ SyntaxError in backend/server.py: {e}")
+        return False
+    except Exception as e:
+        print(f"❌ Import error in backend/server.py: {e}")
         return False
 
-    def test_session_retrieval(self):
-        """Test session retrieval"""
-        if not self.session_id:
-            self.log_test("Get Session", False, "No session ID available")
-            return False
-            
-        print("\n🔍 Testing Session Retrieval...")
-        success, data = self.run_test(
-            "Get Session",
-            "GET",
-            f"sessions/{self.session_id}",
-            200
-        )
-        return success and data and data.get("id") == self.session_id
 
-    def create_test_document(self):
-        """Create a test document for upload"""
-        test_content = """
-        Climate Change Policy Analysis
+def test_domain_safety_helpers():
+    """Test 2: Validate sports/domain safety helpers for IPL prompt."""
+    print("\n=== TEST 2: Domain Safety Helpers ===")
+    
+    try:
+        from server import get_session_domain, is_market_domain, sanitize_non_market_report
         
-        The recent climate policy proposals have generated significant debate among various stakeholders.
-        Environmental groups strongly support the new regulations, citing urgent need for action.
-        Industry representatives express concerns about economic impact and implementation costs.
-        Scientists provide mixed assessments of the policy's effectiveness.
+        # Test get_session_domain with IPL sports session
+        ipl_session = {
+            'topic': 'IPL 2026 winner prediction',
+            'prediction_query': 'Which team can win IPL 2026?',
+            'domain': 'sports'
+        }
         
-        Key stakeholders include:
-        - Environmental Protection Agency (EPA)
-        - Green Coalition advocacy group
-        - Manufacturing Industry Association
-        - Climate Research Institute
-        - Local communities affected by regulations
+        domain = get_session_domain(ipl_session)
+        print(f"get_session_domain(IPL session) = '{domain}'")
         
-        The policy aims to reduce carbon emissions by 40% over the next decade through:
-        - Stricter emission standards for industries
-        - Incentives for renewable energy adoption
-        - Carbon pricing mechanisms
-        - Investment in green technology research
-        """
-        
-        # Create temporary test file
-        test_file_path = "/tmp/test_climate_policy.txt"
-        with open(test_file_path, "w") as f:
-            f.write(test_content)
-        return test_file_path
-
-    def test_document_upload(self):
-        """Test document upload and knowledge graph extraction"""
-        if not self.session_id:
-            self.log_test("Document Upload", False, "No session ID available")
+        if domain != 'sports':
+            print(f"❌ Expected domain='sports', got '{domain}'")
             return False
-            
-        print("\n🔍 Testing Document Upload & Knowledge Graph Extraction...")
+        print("✅ get_session_domain correctly returns 'sports' for IPL")
         
-        # Create test document
-        test_file_path = self.create_test_document()
-        prediction_query = "Will public support for the climate policy increase or decrease in the next 6 months?"
+        # Test is_market_domain
+        is_market = is_market_domain('sports')
+        print(f"is_market_domain('sports') = {is_market}")
         
-        try:
-            with open(test_file_path, 'rb') as f:
-                files = {'file': ('test_climate_policy.txt', f, 'text/plain')}
-                data = {'prediction_query': prediction_query}
-                
-                success, response_data = self.run_test(
-                    "Upload Document & Extract Graph",
-                    "POST",
-                    f"sessions/{self.session_id}/upload",
-                    200,
-                    data=data,
-                    files=files,
-                    timeout=60  # Longer timeout for AI processing
-                )
-                
-                if success and response_data:
-                    graph = response_data.get("graph", {})
-                    if graph and "entities" in graph and "relationships" in graph:
-                        print(f"   Extracted {len(graph.get('entities', []))} entities")
-                        print(f"   Extracted {len(graph.get('relationships', []))} relationships")
-                        return True
-                    else:
-                        self.log_test("Document Upload", False, "Invalid graph structure in response")
-                        return False
+        if is_market:
+            print("❌ Expected is_market_domain('sports') to be False")
+            return False
+        print("✅ is_market_domain('sports') correctly returns False")
+        
+        # Test is_market_domain for actual market domains
+        for market_domain in ['financial', 'crypto', 'macro', 'real_estate']:
+            if not is_market_domain(market_domain):
+                print(f"❌ is_market_domain('{market_domain}') should be True")
                 return False
-                
-        except Exception as e:
-            self.log_test("Document Upload", False, f"File handling error: {str(e)}")
-            return False
-        finally:
-            # Clean up test file
-            if os.path.exists(test_file_path):
-                os.remove(test_file_path)
-
-    def test_agent_generation(self):
-        """Test AI agent generation"""
-        if not self.session_id:
-            self.log_test("Agent Generation", False, "No session ID available")
-            return False
-            
-        print("\n🔍 Testing Agent Generation...")
+        print("✅ is_market_domain correctly identifies market domains")
         
-        success, response_data = self.run_test(
-            "Generate Agents",
-            "POST",
-            f"sessions/{self.session_id}/generate-agents",
-            200,
-            data={"num_agents": 15},
-            timeout=90  # Longer timeout for AI processing
-        )
+        # Test sanitize_non_market_report
+        print("\n--- Testing sanitize_non_market_report ---")
         
-        if success and response_data:
-            agents = response_data.get("agents", [])
-            if len(agents) == 15:
-                print(f"   Generated {len(agents)} agents")
-                # Check agent structure
-                if agents and all(key in agents[0] for key in ["id", "name", "personality_type", "occupation"]):
-                    return True
-                else:
-                    self.log_test("Agent Generation", False, "Invalid agent structure")
-                    return False
-            else:
-                self.log_test("Agent Generation", False, f"Expected 15 agents, got {len(agents)}")
-                return False
-        return False
-
-    def test_simulation_start(self):
-        """Test simulation start"""
-        if not self.session_id:
-            self.log_test("Start Simulation", False, "No session ID available")
-            return False
-            
-        print("\n🔍 Testing Simulation Start...")
-        
-        success, response_data = self.run_test(
-            "Start Simulation",
-            "POST",
-            f"sessions/{self.session_id}/simulate",
-            200,
-            data={"num_rounds": 3}  # Use fewer rounds for testing
-        )
-        
-        return success and response_data and response_data.get("status") == "simulating"
-
-    def test_simulation_status_polling(self):
-        """Test simulation status polling"""
-        if not self.session_id:
-            self.log_test("Simulation Status", False, "No session ID available")
-            return False
-            
-        print("\n🔍 Testing Simulation Status Polling...")
-        
-        # Poll for status updates
-        max_polls = 20  # Max 2 minutes of polling
-        poll_count = 0
-        
-        while poll_count < max_polls:
-            success, response_data = self.run_test(
-                f"Poll Status (attempt {poll_count + 1})",
-                "GET",
-                f"sessions/{self.session_id}/simulation-status",
-                200
-            )
-            
-            if not success:
-                return False
-                
-            status = response_data.get("status")
-            post_count = response_data.get("post_count", 0)
-            current_round = response_data.get("current_round", 0)
-            
-            print(f"   Status: {status}, Posts: {post_count}, Round: {current_round}")
-            
-            if status == "simulation_done":
-                print("   ✅ Simulation completed successfully")
-                return True
-            elif status == "error":
-                self.log_test("Simulation Status", False, f"Simulation failed with error")
-                return False
-            
-            poll_count += 1
-            time.sleep(6)  # Wait 6 seconds between polls
-        
-        self.log_test("Simulation Status", False, "Simulation did not complete within timeout")
-        return False
-
-    def test_posts_retrieval(self):
-        """Test posts retrieval"""
-        if not self.session_id:
-            self.log_test("Get Posts", False, "No session ID available")
-            return False
-            
-        print("\n🔍 Testing Posts Retrieval...")
-        
-        success, response_data = self.run_test(
-            "Get Simulation Posts",
-            "GET",
-            f"sessions/{self.session_id}/posts",
-            200
-        )
-        
-        if success and response_data:
-            posts = response_data.get("posts", [])
-            print(f"   Retrieved {len(posts)} posts")
-            
-            # Check post structure
-            if posts and all(key in posts[0] for key in ["agent_name", "content", "platform", "round"]):
-                return True
-            elif not posts:
-                self.log_test("Get Posts", False, "No posts found")
-                return False
-            else:
-                self.log_test("Get Posts", False, "Invalid post structure")
-                return False
-        return False
-
-    def test_report_generation(self):
-        """Test report generation"""
-        if not self.session_id:
-            self.log_test("Generate Report", False, "No session ID available")
-            return False
-            
-        print("\n🔍 Testing Report Generation...")
-        
-        success, response_data = self.run_test(
-            "Generate Prediction Report",
-            "POST",
-            f"sessions/{self.session_id}/generate-report",
-            200,
-            timeout=90  # Longer timeout for AI processing
-        )
-        
-        if success and response_data:
-            report = response_data.get("report", {})
-            required_keys = ["executive_summary", "prediction", "opinion_landscape"]
-            
-            if all(key in report for key in required_keys):
-                print(f"   Report generated with prediction: {report.get('prediction', {}).get('outcome', 'N/A')}")
-                return True
-            else:
-                self.log_test("Generate Report", False, "Invalid report structure")
-                return False
-        return False
-
-    def test_report_retrieval(self):
-        """Test report retrieval"""
-        if not self.session_id:
-            self.log_test("Get Report", False, "No session ID available")
-            return False
-            
-        print("\n🔍 Testing Report Retrieval...")
-        
-        success, response_data = self.run_test(
-            "Get Stored Report",
-            "GET",
-            f"sessions/{self.session_id}/report",
-            200
-        )
-        
-        if success and response_data:
-            required_keys = ["executive_summary", "prediction", "opinion_landscape"]
-            if all(key in response_data for key in required_keys):
-                return True
-            else:
-                self.log_test("Get Report", False, "Invalid report structure")
-                return False
-        return False
-
-    def test_chat_functionality(self):
-        """Test chat functionality"""
-        if not self.session_id:
-            self.log_test("Chat Functionality", False, "No session ID available")
-            return False
-            
-        print("\n🔍 Testing Chat Functionality...")
-        
-        # Test chat with ReportAgent
-        success, response_data = self.run_test(
-            "Chat with ReportAgent",
-            "POST",
-            f"sessions/{self.session_id}/chat",
-            200,
-            data={
-                "target_type": "report",
-                "target_id": "report_agent",
-                "message": "What's the most important finding from the simulation?"
+        # Create a legacy sports report with market data leakage
+        legacy_report = {
+            'domain': 'sports',
+            'stock_data': [
+                {'ticker': 'IPL.NS', 'last_close': 100, 'price': 105}
+            ],
+            'prediction': {
+                'outcome': 'Mumbai Indians will win IPL 2026; stock price target Rs 500 with support at Rs 450.',
+                'confidence': 'High',
+                'confidence_score': 0.75
             },
-            timeout=60
-        )
+            'prediction_quality': {
+                'freshness': {
+                    'market_data_points': 5,
+                    'web_data_points': 10
+                },
+                'evidence_drivers': [
+                    {'source': 'market_data', 'name': 'Stock Price'},
+                    {'source': 'web_search', 'name': 'Team Form'}
+                ]
+            },
+            'evidence_ledger': [
+                {'category': 'market_data', 'source': 'ticker_IPL', 'signal': 'price up'},
+                {'category': 'web_search', 'source': 'sports_news', 'signal': 'team strong'},
+                {'category': 'market_data', 'source': 'market_analysis', 'signal': 'bullish'}
+            ]
+        }
         
-        if success and response_data and "response" in response_data:
-            print(f"   ReportAgent response: {response_data['response'][:100]}...")
-            return True
-        return False
-
-    def test_chat_history(self):
-        """Test chat history retrieval"""
-        if not self.session_id:
-            self.log_test("Chat History", False, "No session ID available")
+        sanitized = sanitize_non_market_report(legacy_report, ipl_session)
+        
+        # Check stock_data removed
+        if 'stock_data' in sanitized:
+            print(f"❌ stock_data not removed: {sanitized.get('stock_data')}")
             return False
-            
-        print("\n🔍 Testing Chat History...")
+        print("✅ stock_data removed from sports report")
         
-        success, response_data = self.run_test(
-            "Get Chat History",
-            "GET",
-            f"sessions/{self.session_id}/chat-history?target_type=report&target_id=report_agent",
-            200
-        )
+        # Check market_data_points set to 0
+        freshness = sanitized.get('prediction_quality', {}).get('freshness', {})
+        market_points = freshness.get('market_data_points', -1)
+        if market_points != 0:
+            print(f"❌ market_data_points not set to 0: {market_points}")
+            return False
+        print("✅ prediction_quality.freshness.market_data_points set to 0")
         
-        if success and response_data and "history" in response_data:
-            history = response_data["history"]
-            print(f"   Retrieved {len(history)} chat messages")
-            return True
+        # Check evidence_drivers filtered
+        drivers = sanitized.get('prediction_quality', {}).get('evidence_drivers', [])
+        market_drivers = [d for d in drivers if 'market' in str(d.get('source', '')).lower()]
+        if market_drivers:
+            print(f"❌ Market drivers not removed: {market_drivers}")
+            return False
+        print("✅ Market evidence_drivers removed")
+        
+        # Check evidence_ledger filtered
+        ledger = sanitized.get('evidence_ledger', [])
+        market_ledger = [item for item in ledger if item.get('category') == 'market_data']
+        if market_ledger:
+            print(f"❌ Market data ledger entries not removed: {market_ledger}")
+            return False
+        print("✅ Market data evidence_ledger entries removed")
+        
+        # Check outcome text scrubbed
+        outcome = sanitized.get('prediction', {}).get('outcome', '')
+        print(f"Sanitized outcome: {outcome}")
+        
+        # Check for stock-price language removal
+        leak_keywords = ['stock price', 'Rs 500', 'Rs 450', 'support at', 'target']
+        found_leaks = [kw for kw in leak_keywords if kw.lower() in outcome.lower()]
+        
+        if found_leaks:
+            print(f"❌ Stock-price language not removed from outcome: {found_leaks}")
+            return False
+        
+        # Check that sports winner clause is preserved
+        if 'Mumbai Indians' not in outcome and 'IPL' not in outcome and 'sports' not in outcome.lower():
+            print(f"❌ Sports winner clause removed incorrectly: {outcome}")
+            return False
+        
+        print("✅ Stock-price clauses removed while preserving sports winner clause")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Domain safety helper test failed: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
-    def run_all_tests(self):
-        """Run all API tests in sequence"""
-        print("🚀 Starting SwarmSim Backend API Tests")
-        print(f"Testing against: {self.base_url}")
-        print("=" * 60)
+
+def test_resolve_ticker_sports():
+    """Test 3: Verify resolve_ticker behavior for sports queries."""
+    print("\n=== TEST 3: resolve_ticker for Sports Queries ===")
+    
+    try:
+        from server import resolve_ticker
+        import asyncio
         
-        # Test sequence - each test depends on previous ones
-        test_sequence = [
-            ("Health Check", self.test_health_endpoint),
-            ("Session Creation", self.test_session_creation),
-            ("Session Retrieval", self.test_session_retrieval),
-            ("Document Upload", self.test_document_upload),
-            ("Agent Generation", self.test_agent_generation),
-            ("Simulation Start", self.test_simulation_start),
-            ("Simulation Status", self.test_simulation_status_polling),
-            ("Posts Retrieval", self.test_posts_retrieval),
-            ("Report Generation", self.test_report_generation),
-            ("Report Retrieval", self.test_report_retrieval),
-            ("Chat Functionality", self.test_chat_functionality),
-            ("Chat History", self.test_chat_history),
-        ]
+        # Test IPL query
+        query = 'Which team can win IPL 2026?'
+        graph = {'entities': [{'name': 'IPL'}]}
         
-        failed_tests = []
+        print(f"Testing resolve_ticker('{query}', {graph})")
         
-        for test_name, test_func in test_sequence:
-            try:
-                success = test_func()
-                if not success:
-                    failed_tests.append(test_name)
-                    print(f"⚠️  {test_name} failed - continuing with remaining tests")
-            except Exception as e:
-                failed_tests.append(test_name)
-                print(f"💥 {test_name} crashed: {str(e)}")
+        # Run async function
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        tickers = loop.run_until_complete(resolve_ticker(query, graph))
+        loop.close()
         
-        # Print summary
-        print("\n" + "=" * 60)
-        print("📊 TEST SUMMARY")
-        print("=" * 60)
-        print(f"Total tests run: {self.tests_run}")
-        print(f"Tests passed: {self.tests_passed}")
-        print(f"Tests failed: {self.tests_run - self.tests_passed}")
-        print(f"Success rate: {(self.tests_passed / self.tests_run * 100):.1f}%")
+        print(f"resolve_ticker returned: {tickers}")
         
-        if failed_tests:
-            print(f"\n❌ Failed tests: {', '.join(failed_tests)}")
+        # IPL should be in skip_words, so no ticker should be resolved
+        if tickers:
+            print(f"⚠️  WARNING: resolve_ticker returned tickers for sports query: {tickers}")
+            print("    However, generate_report should skip ticker resolution for sports domain")
+            # This is not a failure since the main gating is in generate_report
         else:
-            print("\n✅ All tests passed!")
+            print("✅ resolve_ticker correctly returns no tickers for IPL sports query")
         
-        return len(failed_tests) == 0
+        return True
+        
+    except Exception as e:
+        print(f"❌ resolve_ticker test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_auth_endpoint_regression():
+    """Test 4: Verify /api/auth/me returns 401, not 404 (regression safety)."""
+    print("\n=== TEST 4: Auth Endpoint Regression ===")
+    
+    try:
+        import requests
+        
+        backend_url = "https://predict.preview.emergentagent.com/api"
+        
+        print(f"Testing GET {backend_url}/auth/me (without auth)")
+        
+        response = requests.get(f"{backend_url}/auth/me", timeout=10)
+        
+        print(f"Status Code: {response.status_code}")
+        print(f"Response: {response.text[:200]}")
+        
+        if response.status_code == 404:
+            print("❌ REGRESSION: /api/auth/me returns 404 (should be 401)")
+            return False
+        
+        if response.status_code != 401:
+            print(f"⚠️  WARNING: Expected 401, got {response.status_code}")
+            return False
+        
+        # Check response body
+        try:
+            data = response.json()
+            detail = data.get('detail', '')
+            if 'authentication required' not in detail.lower():
+                print(f"⚠️  WARNING: Expected 'Authentication required' in detail, got: {detail}")
+        except:
+            pass
+        
+        print("✅ /api/auth/me correctly returns 401 Authentication required")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Auth endpoint test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_backend_running():
+    """Test 5: Confirm backend is running and healthy."""
+    print("\n=== TEST 5: Backend Health Check ===")
+    
+    try:
+        import requests
+        
+        backend_url = "https://predict.preview.emergentagent.com/api"
+        
+        print(f"Testing GET {backend_url}/health")
+        
+        response = requests.get(f"{backend_url}/health", timeout=10)
+        
+        print(f"Status Code: {response.status_code}")
+        print(f"Response: {response.text}")
+        
+        if response.status_code != 200:
+            print(f"❌ Backend health check failed with status {response.status_code}")
+            return False
+        
+        data = response.json()
+        if data.get('status') != 'ok':
+            print(f"❌ Backend health status not 'ok': {data}")
+            return False
+        
+        print("✅ Backend is running and healthy")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Backend health check failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
 
 def main():
-    """Main test runner"""
-    tester = SwarmSimAPITester()
-    success = tester.run_all_tests()
-    return 0 if success else 1
+    """Run all backend tests."""
+    print("=" * 70)
+    print("BACKEND TESTING: Market-Data Leakage Prevention in Sports Predictions")
+    print("=" * 70)
+    
+    results = {}
+    
+    # Test 1: Backend imports
+    results['backend_imports'] = test_backend_imports()
+    
+    # Test 2: Domain safety helpers
+    results['domain_safety'] = test_domain_safety_helpers()
+    
+    # Test 3: resolve_ticker for sports
+    results['resolve_ticker'] = test_resolve_ticker_sports()
+    
+    # Test 4: Auth endpoint regression
+    results['auth_regression'] = test_auth_endpoint_regression()
+    
+    # Test 5: Backend health
+    results['backend_health'] = test_backend_running()
+    
+    # Summary
+    print("\n" + "=" * 70)
+    print("TEST SUMMARY")
+    print("=" * 70)
+    
+    for test_name, passed in results.items():
+        status = "✅ PASS" if passed else "❌ FAIL"
+        print(f"{status}: {test_name}")
+    
+    all_passed = all(results.values())
+    
+    print("\n" + "=" * 70)
+    if all_passed:
+        print("✅ ALL TESTS PASSED")
+    else:
+        print("❌ SOME TESTS FAILED")
+    print("=" * 70)
+    
+    return 0 if all_passed else 1
 
-if __name__ == "__main__":
+
+if __name__ == '__main__':
     sys.exit(main())

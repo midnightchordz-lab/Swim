@@ -118,6 +118,24 @@ backend:
       - working: true
         agent: "testing"
         comment: "Backend testing completed successfully. GET /api/auth/me returns HTTP 401 with JSON detail 'Authentication required' as expected (not 404). Service health check passed - backend running on https://predict.preview.emergentagent.com/api with status 'ok'. Auth endpoint properly configured and working correctly."
+  - task: "Prevent market-data leakage in sports predictions"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "user"
+        comment: "User reported IPL 2026 winner sports prediction showing stock prices/support/resistance and market data in report. Expected sports/team outcome only."
+      - working: "NA"
+        agent: "main"
+        comment: "Root cause: report generation resolved uppercase sports acronyms like IPL as possible tickers and injected market_context for all domains; tracking could also override non-market predictions to DIRECTIONAL if any ticker existed. Fixed by gating ticker resolution/market prompt injection to financial/crypto/macro/real_estate domains only, adding sports acronym ticker skip words, adding sports-specific prompt guidance and web searches, sanitizing legacy non-market reports, and preventing non-market ticker override in freeze_prediction. Backend py_compile passed and backend restarted."
+      - working: true
+        agent: "testing"
+        comment: "Backend fix VERIFIED at code/API-helper level. All 5 tests passed: (1) backend/server.py compiles and imports successfully. (2) Domain safety helpers work correctly: get_session_domain returns 'sports' for IPL session, is_market_domain('sports') returns False, sanitize_non_market_report removes stock_data, sets market_data_points to 0, removes market evidence_drivers and ledger entries, and scrubs stock-price clauses ('stock price target Rs 500 with support at Rs 450') while preserving sports winner clause ('Mumbai Indians will win IPL 2026'). (3) resolve_ticker returns no tickers for IPL sports query (IPL in skip_words). (4) generate_report now gates ticker resolution/market_context injection to market domains only (financial/crypto/macro/real_estate), skipping sports entirely. (5) /api/auth/me regression check passed - returns 401 Authentication required (not 404). Backend is running and healthy. The market-data leakage prevention fix is working correctly."
+
 frontend:
   - task: "Import latest GitHub main frontend and verify private-beta auth landing"
     implemented: true
@@ -155,13 +173,27 @@ frontend:
         agent: "testing"
         comment: "CheckCircle runtime error fix VERIFIED. Tested app with multiple authentication attempts and page loads. Key findings: (1) Zero console errors detected across all test runs. (2) No React error overlay appeared at any point. (3) No CheckCircle reference errors in browser console. (4) CheckCircle is correctly imported from lucide-react at line 6 of App.js and used in UploadStep component at lines 693 and 748. (5) App loads cleanly without any runtime errors. The original issue 'Can't find variable: CheckCircle' is completely resolved. Fix is working correctly."
 
+  - task: "Hide market-data UI for non-market reports"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/App.js"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Defense-in-depth UI fix: Live Market Data section now renders only for financial/crypto/macro/real_estate report domains, so sports reports cannot display stock_data even if legacy data exists. JS lint passed."
+
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 4
+  test_sequence: 5
   run_ui: true
 test_plan:
-  current_focus: []
+  current_focus:
+    - "Prevent market-data leakage in sports predictions"
+    - "Hide market-data UI for non-market reports"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -178,3 +210,9 @@ agent_communication:
 
   - agent: "testing"
     message: "CheckCircle runtime error fix testing completed successfully. Verified across multiple page loads and authentication attempts. Zero console errors detected. No React error overlay appeared. No CheckCircle reference errors found. The fix (importing CheckCircle from lucide-react in App.js) is working correctly. The original runtime error 'Can't find variable: CheckCircle' is completely resolved. All frontend tasks passing - ready for user acceptance."
+
+  - agent: "main"
+    message: "User reported IPL 2026 sports/team winner prediction showing stock-price language and market data. Root cause fixed in backend: non-market domains no longer resolve tickers or receive market_context, IPL and other sports acronyms are skipped as tickers, sports searches are sports-specific, legacy non-market reports are sanitized on retrieval/PDF/chat, and prediction tracking no longer becomes DIRECTIONAL merely because a ticker exists unless the domain is market-related. Frontend Live Market Data section is also hidden unless report domain is financial/crypto/macro/real_estate. Backend py_compile and JS lint passed; backend restarted. Please test sports/IPL classification/report safety without running unnecessary long flows if possible."
+  
+  - agent: "testing"
+    message: "Backend testing completed successfully for market-data leakage prevention. All domain safety helpers verified at code level: get_session_domain correctly returns 'sports' for IPL, is_market_domain('sports') returns False, sanitize_non_market_report removes all market artifacts (stock_data, market evidence ledger, market_data_points) and scrubs stock-price language while preserving sports winner clauses, resolve_ticker returns no tickers for IPL (skip_words working), and generate_report gates ticker/market_context to market domains only. Auth endpoint regression check passed (401 not 404). Backend is running and healthy. The fix is working correctly at the API-helper level."

@@ -136,6 +136,24 @@ backend:
         agent: "testing"
         comment: "Backend fix VERIFIED at code/API-helper level. All 5 tests passed: (1) backend/server.py compiles and imports successfully. (2) Domain safety helpers work correctly: get_session_domain returns 'sports' for IPL session, is_market_domain('sports') returns False, sanitize_non_market_report removes stock_data, sets market_data_points to 0, removes market evidence_drivers and ledger entries, and scrubs stock-price clauses ('stock price target Rs 500 with support at Rs 450') while preserving sports winner clause ('Mumbai Indians will win IPL 2026'). (3) resolve_ticker returns no tickers for IPL sports query (IPL in skip_words). (4) generate_report now gates ticker resolution/market_context injection to market domains only (financial/crypto/macro/real_estate), skipping sports entirely. (5) /api/auth/me regression check passed - returns 401 Authentication required (not 404). Backend is running and healthy. The market-data leakage prevention fix is working correctly."
 
+  - task: "Prevent unsupported sports standings claims"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "user"
+        comment: "User reported IPL 2026 prediction still illogical/outdated: outcome says Mumbai Indians are leveraging top-table position even though MI is not on top of the table. Expected no unsupported standings/table claims."
+      - working: "NA"
+        agent: "main"
+        comment: "Added sports-specific live intelligence prompt for current standings/form/injuries with explicit 'do not invent table positions' guardrail; made sports web searches include current points table/standings; strengthened report prompt to allow standings/table claims only when supported by live sources; added sanitizer to rewrite unsupported top-table/table-leading phrases in legacy sports reports. py_compile passed and backend restarted."
+      - working: true
+        agent: "testing"
+        comment: "Backend fix VERIFIED at code level. All 7 tests passed: (1) backend/server.py compiles and imports successfully. (2) build_domain_report_guidance('sports') contains all required guardrails: mentions sports outcome, current points table/standings, only cite if explicitly present, avoid unsupported standings, no historical reputation as evidence, never mention stock prices. (3) scrub_non_market_text correctly removes unsupported table claims - tested with 3 cases including 'Mumbai Indians leveraging their top-table position' which is now rewritten to 'based on current squad and form signals' while preserving team names and tournament context. (4) fetch_web_data sports branch includes current points table/standings query with progress message 'Checking current points table & standings...'. (5) fetch_grok_web_intel has sports-specific prompt with 'do not invent table positions' guardrail, checks for explicit sources, warns about unavailable data. (6) run_live_fetch correctly passes domain parameter to both fetch_web_data and fetch_grok_web_intel. (7) Regression check passed - /api/auth/me returns 401 'Authentication required' (not 404). Backend is running and healthy. The sports standings claims prevention fix is working correctly."
+
 frontend:
   - task: "Import latest GitHub main frontend and verify private-beta auth landing"
     implemented: true
@@ -195,12 +213,11 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 6
+  test_sequence: 7
   run_ui: true
 test_plan:
   current_focus:
-    - "Prevent market-data leakage in sports predictions"
-    - "Hide market-data UI for non-market reports"
+    - "Prevent unsupported sports standings claims"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -226,3 +243,9 @@ agent_communication:
   
   - agent: "testing"
     message: "Frontend testing completed successfully for market-data UI hiding. Authenticated into app and verified via browser automation: (1) No stock-data-section element in DOM. (2) No 'Live Market Data' text visible. (3) No stock price/support/resistance mentions. (4) Code at App.js line 2139 correctly gates Live Market Data section rendering to financial/crypto/macro/real_estate domains only. (5) App loads without errors. Both backend sanitization and frontend UI defense-in-depth fixes are working correctly. Non-market/sports reports will not display market data UI."
+
+  - agent: "testing"
+    message: "Backend testing completed successfully for sports standings claims prevention. All 7 verification checks passed: (1) backend/server.py compiles and imports. (2) build_domain_report_guidance('sports') contains all required guardrails including 'only cite table position if explicitly present in current live sources', 'avoid standings-based reasoning if unavailable/ambiguous', 'do not use historical reputation as current evidence'. (3) scrub_non_market_text correctly removes unsupported table claims like 'leveraging their top-table position' and rewrites to 'based on current squad and form signals' while preserving team names and tournament context. (4) fetch_web_data sports branch includes 'current points table standings table position latest' query with progress message. (5) fetch_grok_web_intel has sports-specific prompt with 'do not invent table positions' guardrail. (6) run_live_fetch passes domain to both fetch_web_data and fetch_grok_web_intel. (7) Regression check passed - /api/auth/me returns 401 'Authentication required' (not 404). Backend is running and healthy. The sports standings claims prevention fix is working correctly at the code/helper level."
+
+  - agent: "main"
+    message: "User reported sports logic is still outdated/illogical because IPL prediction claimed Mumbai Indians had a top-table position though they are not top. Main added sports-specific Grok/web-search prompt for current standings/table/form/injuries with explicit guardrail not to invent table positions, added current points-table query, strengthened report prompt to only cite standings if explicitly supported by live sources, and added sanitizer for legacy sports reports to rewrite unsupported top-table/table-leading claims. Backend py_compile passed and backend restarted. Please verify helper/prompt behavior without running long LLM simulations."

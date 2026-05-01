@@ -1234,7 +1234,7 @@ mix of retail/expert/media perspectives, no bots]"""
         return {"tweets": [], "intel_brief": "", "sentiment": {}, "available": False, "error": str(e)}
 
 
-async def fetch_grok_web_intel(topic: str, horizon: str = "next week") -> dict:
+async def fetch_grok_web_intel(topic: str, horizon: str = "next week", domain: str = "general") -> dict:
     """Use Grok with live web_search to build a real-time intelligence brief."""
     xai_key = os.environ.get("XAI_API_KEY")
     if not xai_key or not XAI_AVAILABLE:
@@ -1245,13 +1245,20 @@ async def fetch_grok_web_intel(topic: str, horizon: str = "next week") -> dict:
         client = XAIClient(api_key=xai_key)
         loop = asyncio.get_running_loop()
 
-        def _call():
-            chat = client.chat.create(
-                model="grok-4-1-fast",
-                tools=[xai_web_search()],
-            )
-            chat.append(xai_user(
-                f"""Search for the very latest news about: "{topic}"
+        if (domain or "").lower() == "sports":
+            grok_prompt = f"""Search for the very latest sports information about: "{topic}"
+Relevant to predicting outcomes over: {horizon}
+Focus on the most recent credible standings/table, recent form, fixtures, injuries, squads, venues, and expert analysis.
+
+Write a 200-word intelligence brief with these sections:
+1. Current standings/table and recent form — only state table positions if explicitly found in current sources; say "not verified" if unavailable
+2. Key teams/players and their positions — 2-3 sentences
+3. Main risks, injuries, schedule/venue factors — 2-3 sentences
+4. What to watch for {horizon} — 1-2 sentences
+
+Do NOT invent table positions. Do NOT use historical reputation as current standings. Use real team names, current facts, and dates. No filler."""
+        else:
+            grok_prompt = f"""Search for the very latest news about: "{topic}"
 Relevant to predicting outcomes over: {horizon}
 Focus on the last 72 hours only.
 
@@ -1262,7 +1269,13 @@ Write a 200-word intelligence brief with these sections:
 4. What to watch for {horizon} — 1-2 sentences
 
 Use real names, real numbers. No vague statements. No filler."""
-            ))
+
+        def _call():
+            chat = client.chat.create(
+                model="grok-4-1-fast",
+                tools=[xai_web_search()],
+            )
+            chat.append(xai_user(grok_prompt))
             return chat.sample()
 
         response = await loop.run_in_executor(None, _call)
@@ -1582,13 +1595,47 @@ def build_domain_report_guidance(domain: str) -> str:
     if domain == "sports":
         return (
             "This is a SPORTS OUTCOME prediction. Predict the likely winner/team outcome and discuss sports factors: "
-            "team form, squad balance, injuries, venues, matchups, schedule, coaching, and tournament momentum. "
-            "NEVER mention stock prices, share prices, tickers, support/resistance levels, RSI, moving averages, or market-data targets."
+            "current points table/standings, recent form, squad balance, injuries, venues, matchups, schedule, coaching, "
+            "and tournament momentum. Only cite a team's table position if it is explicitly present in current live sources. "
+            "If current standings are unavailable or ambiguous, say so and avoid standings-based reasoning. "
+            "Do not use historical reputation as current evidence. NEVER mention stock prices, share prices, tickers, "
+            "support/resistance levels, RSI, moving averages, or market-data targets."
         )
     return (
         "This is a non-market prediction. Keep the answer outcome/sentiment/event-based for the domain. "
         "NEVER mention stock prices, share prices, tickers, support/resistance levels, RSI, moving averages, or market-data targets."
     )
+
+
+def scrub_unsupported_sports_table_claims(text: str) -> str:
+    """Remove standings/table-position claims that are unsafe without explicit current evidence."""
+    if not text:
+        return text
+
+    cleaned = text
+    replacements = [
+        (
+            r"\s*,?\s*(?:leveraging|based on|because of|due to|from)\s+(?:their|its|his|her)\s+"
+            r"(?:top[-\s]table|top[-\s]of[-\s]the[-\s]table|table[-\s]topping|league[-\s]leading|"
+            r"points[-\s]table[-\s]leading|current\s+top(?:\s+of\s+the)?\s+table)\s+"
+            r"(?:position|status|spot|form|momentum)?\s*,?\s*",
+            " based on current squad and form signals, ",
+        ),
+        (
+            r"\b(?:top[-\s]table|top[-\s]of[-\s]the[-\s]table|table[-\s]topping|league[-\s]leading|"
+            r"points[-\s]table[-\s]leading)\s+(?:position|status|spot|form|momentum)\b",
+            "current form",
+        ),
+        (r"\bleading\s+the\s+(?:points\s+)?table\b", "showing strong current form"),
+        (r"\bon\s+top\s+of\s+the\s+(?:points\s+)?table\b", "in strong current form"),
+    ]
+    for pattern, replacement in replacements:
+        cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
+
+    cleaned = re.sub(r"\s+,", ",", cleaned)
+    cleaned = re.sub(r",\s*,", ",", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    return cleaned.strip()
 
 
 def scrub_non_market_text(text: str, domain: str, topic: str = "") -> str:
@@ -1602,6 +1649,9 @@ def scrub_non_market_text(text: str, domain: str, topic: str = "") -> str:
         r"target\s+(?:resistance|support|price)", r"(?:Rs|₹|INR|USD|\$)\s*\d+(?:\.\d+)?",
     ]
     leak_re = re.compile("|".join(leak_patterns), re.IGNORECASE)
+
+    if domain == "sports":
+        text = scrub_unsupported_sports_table_claims(text)
 
     # Split on sentence boundaries and semicolons so useful first clauses like
     # "IPL winner will emerge from frontrunners" survive while price clauses are removed.
@@ -1671,6 +1721,7 @@ async def fetch_web_data(topic: str, horizon: str, session_id: str = None, domai
     if domain == "sports":
         search_queries = [
             f"{topic} latest sports news today {horizon}",
+            f"{topic} current points table standings table position latest",
             f"{topic} teams squad players injuries schedule",
             f"{topic} expert analysis winner prediction",
             f"{topic} tournament form standings fixtures 2025 2026",
@@ -1681,6 +1732,7 @@ async def fetch_web_data(topic: str, horizon: str, session_id: str = None, domai
         ]
         progress_steps = [
             "Searching latest sports news...",
+            "Checking current points table & standings...",
             "Checking squads, players & injuries...",
             "Pulling expert winner analysis...",
             "Pulling tournament form & fixtures...",
@@ -2156,7 +2208,7 @@ async def run_live_fetch(session_id: str, topic: str, horizon: str, prediction_q
         web_data = await fetch_web_data(topic, horizon, session_id=session_id, domain=domain)
 
         # Also try Grok web intel in parallel (enhances the brief)
-        grok_web_result = await fetch_grok_web_intel(topic, horizon)
+        grok_web_result = await fetch_grok_web_intel(topic, horizon, domain=domain)
         grok_web_brief = grok_web_result.get("brief", "") if grok_web_result.get("available") else ""
 
         # Also fetch real Twitter via Grok to seed into the session
@@ -3295,9 +3347,9 @@ Simulation ({session.get('total_rounds',3)} rounds):
 
 Return JSON with ONLY these fields:
 {{
-  "executive_summary": "3 sentences grounded in the domain guidance. For sports, discuss teams and match/tournament factors only.",
+  "executive_summary": "3 sentences grounded in domain guidance and current evidence. For sports, mention standings/table position only if current live sources explicitly support it; otherwise do not use table-position reasoning.",
   "prediction": {{
-    "outcome": "one sentence answering the prediction directly. For sports, name likely winner/team outcome; do not include stock or price language.",
+    "outcome": "one sentence answering the prediction directly. For sports, name likely winner/team outcome or shortlist with uncertainty; do not claim a top-table/points-table position unless current sources explicitly say it; do not include stock or price language.",
     "confidence": "High|Medium|Low",
     "confidence_score": 0.65,
     "timeframe": "e.g. next month"

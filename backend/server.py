@@ -1548,6 +1548,32 @@ PREDICTION RULES:
     return "\n".join(lines)
 
 
+MARKET_DOMAINS = {"financial", "crypto", "macro"}
+MARKET_QUERY_TERMS = {
+    "stock", "stocks", "share", "shares", "market", "markets", "price", "prices",
+    "trading", "trade", "investor", "investors", "investment", "portfolio",
+    "nifty", "sensex", "nasdaq", "dow", "s&p", "sp500", "index", "indices",
+    "crypto", "bitcoin", "btc", "ethereum", "eth", "forex", "commodity",
+    "earnings", "valuation", "resistance", "support level", "target price",
+}
+
+
+def should_inject_market_data(session: dict, query: str, graph: dict) -> bool:
+    """Only inject market data for explicit financial/market prediction contexts."""
+    domain = (session.get("domain") or detect_topic_category(session.get("topic") or query or "")).lower()
+    if domain in MARKET_DOMAINS:
+        return True
+    if domain not in {"general", "business"}:
+        return False
+
+    text_parts = [
+        session.get("topic", ""),
+        query or "",
+    ]
+    text = " ".join(text_parts).lower()
+    return any(term in text for term in MARKET_QUERY_TERMS)
+
+
 
 async def fetch_web_data(topic: str, horizon: str, session_id: str = None) -> dict:
     """Fetch live web data for a topic using DuckDuckGo search (5-8 queries covering multiple angles)"""
@@ -3130,11 +3156,18 @@ async def generate_report(session_id: str):
         for a in agents[:20]
     ])
 
-    # ── STEP 0: Resolve tickers + fetch live market data ──
-    tickers = await resolve_ticker(query, graph)
+    # ── STEP 0: Resolve tickers + fetch live market data only for market topics ──
+    domain = session.get("domain") or detect_topic_category(session.get("topic") or query)
+    should_use_market_data = should_inject_market_data(session, query, graph)
+    tickers = await resolve_ticker(query, graph) if should_use_market_data else []
     stock_data = await fetch_stock_data_for_prediction(tickers) if tickers else []
     market_context = build_market_context(stock_data) if stock_data else ""
-    logger.info(f"[Report] Stock data for {len(stock_data)} tickers injected into report prompt")
+    logger.info(
+        "[Report] Market data %s for domain=%s; %s ticker(s)",
+        "enabled" if should_use_market_data else "skipped",
+        domain,
+        len(stock_data),
+    )
 
     # ── PHASE 1 — fast core report (Haiku, small) ──
     phase1_system = "You are a prediction analyst. Return ONLY valid JSON, no markdown."
@@ -3148,9 +3181,9 @@ Simulation ({session.get('total_rounds',3)} rounds):
 
 Return JSON with ONLY these fields:
 {{
-  "executive_summary": "3 sentences. If stock data provided, cite exact prices and technical signals.",
+  "executive_summary": "3 sentences. Cite exact market prices only if LIVE STOCK DATA is provided above.",
   "prediction": {{
-    "outcome": "one sentence with specific price targets if stock data available",
+    "outcome": "one sentence. Use price targets only if LIVE STOCK DATA is provided above.",
     "confidence": "High|Medium|Low",
     "confidence_score": 0.65,
     "timeframe": "e.g. next month"

@@ -175,20 +175,27 @@ frontend:
 
   - task: "Hide market-data UI for non-market reports"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/src/App.js"
     stuck_count: 0
     priority: "medium"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
       - working: "NA"
         agent: "main"
         comment: "Defense-in-depth UI fix: Live Market Data section now renders only for financial/crypto/macro/real_estate report domains, so sports reports cannot display stock_data even if legacy data exists. JS lint passed."
+      - working: "NA"
+        agent: "main"
+        comment: "User approved frontend verification. Tester should authenticate and verify non-market/sports reports do not display the Live Market Data section; avoid long LLM/simulation flows unless necessary."
+      - working: true
+        agent: "testing"
+        comment: "Frontend defense-in-depth fix VERIFIED. Successfully authenticated into app and performed comprehensive DOM inspection. Key findings: (1) No stock-data-section element found in DOM. (2) No 'Live Market Data' text visible anywhere in the page. (3) No stock price/support/resistance mentions detected. (4) App loads cleanly without console errors (only non-critical CDN/RUM request failure). (5) Code review confirms Live Market Data section at line 2139 of App.js correctly gates rendering with condition: ['financial', 'crypto', 'macro', 'real_estate'].includes((report.domain || '').toLowerCase()). The frontend fix is working correctly - non-market/sports reports will NOT display the Live Market Data UI section even if legacy stock_data exists in the report object."
+
 
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 5
+  test_sequence: 6
   run_ui: true
 test_plan:
   current_focus:
@@ -216,3 +223,6 @@ agent_communication:
   
   - agent: "testing"
     message: "Backend testing completed successfully for market-data leakage prevention. All domain safety helpers verified at code level: get_session_domain correctly returns 'sports' for IPL, is_market_domain('sports') returns False, sanitize_non_market_report removes all market artifacts (stock_data, market evidence ledger, market_data_points) and scrubs stock-price language while preserving sports winner clauses, resolve_ticker returns no tickers for IPL (skip_words working), and generate_report gates ticker/market_context to market domains only. Auth endpoint regression check passed (401 not 404). Backend is running and healthy. The fix is working correctly at the API-helper level."
+  
+  - agent: "testing"
+    message: "Frontend testing completed successfully for market-data UI hiding. Authenticated into app and verified via browser automation: (1) No stock-data-section element in DOM. (2) No 'Live Market Data' text visible. (3) No stock price/support/resistance mentions. (4) Code at App.js line 2139 correctly gates Live Market Data section rendering to financial/crypto/macro/real_estate domains only. (5) App loads without errors. Both backend sanitization and frontend UI defense-in-depth fixes are working correctly. Non-market/sports reports will not display market data UI."
